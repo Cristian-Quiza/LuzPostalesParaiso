@@ -12,6 +12,7 @@ export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [adminMode, setAdminMode] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -24,7 +25,8 @@ export default function LoginPage() {
     e.preventDefault();
     try {
       await login(username, password);
-      navigate('/dashboard');
+      const loggedUser = useAuthStore.getState().usuario;
+      navigate(loggedUser?.rol === 'cliente' ? '/cliente' : '/dashboard');
     } catch {
       // Error handled by store
     }
@@ -49,8 +51,8 @@ export default function LoginPage() {
           />
         </video>
         {/* Overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-black/20" />
-        <div className="absolute inset-0 bg-primary/10 backdrop-blur-[2px]" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/25 to-black/10" />
+        <div className="absolute inset-0 bg-primary/5" />
       </div>
 
       {/* Glassmorphic Header */}
@@ -70,7 +72,10 @@ export default function LoginPage() {
                   <p className="text-xs text-white/60">Sistema de Facturación</p>
                 </div>
               </div>
-              <div className="hidden md:flex items-center gap-4">
+              <div className="flex items-center gap-3 md:gap-4">
+                <Button type="button" variant="outline" onClick={() => { setAdminMode((value) => !value); clearError(); }} className="border-white/20 bg-white/10 text-white hover:bg-white/20">
+                  {adminMode ? 'Ingreso propietario' : 'Ingreso administrador'}
+                </Button>
                 <span className="text-white/80 text-sm">Energía y Servicios</span>
                 <div className="w-px h-6 bg-white/20" />
                 <span className="text-white/60 text-sm">2026</span>
@@ -124,6 +129,12 @@ export default function LoginPage() {
                     <h2 className="text-2xl font-bold text-white mb-2">Iniciar Sesión</h2>
                     <p className="text-white/60 text-sm">Accede a tu cuenta para continuar</p>
                   </div>
+
+                  {!adminMode && (
+                    <p className="-mt-5 mb-6 text-center text-sm text-emerald-200">
+                      Propietarios: usuario y clave son la cédula registrada.
+                    </p>
+                  )}
 
                   <form onSubmit={handleSubmit} className="space-y-5">
                     {error && (
@@ -194,20 +205,6 @@ export default function LoginPage() {
                       )}
                     </Button>
                   </form>
-
-                  <div className="mt-8 pt-6 border-t border-white/10">
-                    <p className="text-center text-white/40 text-xs mb-3">Datos de acceso de prueba</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-white/5 rounded-lg p-3 text-center">
-                        <p className="text-white/40 text-xs mb-1">Usuario</p>
-                        <p className="text-white font-medium text-sm">admin</p>
-                      </div>
-                      <div className="bg-white/5 rounded-lg p-3 text-center">
-                        <p className="text-white/40 text-xs mb-1">Contraseña</p>
-                        <p className="text-white font-medium text-sm">admin123</p>
-                      </div>
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>

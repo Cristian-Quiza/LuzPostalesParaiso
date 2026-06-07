@@ -1,6 +1,6 @@
-export type Role = 'super_admin' | 'editor' | 'lector';
+export type Role = 'super_admin' | 'editor' | 'lector' | 'cliente';
 
-export type EstadoFactura = 'pendiente' | 'pagada' | 'parcial' | 'vencida';
+export type EstadoFactura = 'pendiente' | 'pagada' | 'parcial' | 'vencida' | 'anulada' | 'corregida';
 
 export interface Usuario {
   id: number;
@@ -35,6 +35,7 @@ export interface Vivienda {
   id: number;
   numero_casa: string;
   manzana_id: number;
+  manzana_codigo?: string;
   propietario: string;
   cedula?: string;
   telefono?: string;
@@ -73,8 +74,9 @@ export interface Lectura {
   ano: number;
   mes: number;
   lectura_anterior?: number;
-  lectura_actual: number;
+  lectura_actual?: number | null;
   consumo?: number;
+  estado?: string;
   sincronizado: boolean;
   offline_id?: string;
   created_at: string;
@@ -121,12 +123,17 @@ export interface Pago {
   metodo_pago?: string;
   fecha_pago: string;
   referencia?: string;
+  tipo_pago?: string;
+  periodo_ano?: number;
+  periodo_mes?: number;
   created_at: string;
   vivienda_id?: number;
   numero_casa?: string;
   propietario?: string;
   cedula?: string;
   manzana_id?: number;
+  manzana_codigo?: string;
+  numero_factura?: string;
   ano?: number;
   mes?: number;
   total_factura?: number;
@@ -232,3 +239,135 @@ export interface HistorialPeriodo {
   fecha_fin?: boolean;
   activa: boolean;
 }
+
+export interface LecturaPlanillaRow {
+  vivienda_id: number;
+  numero_casa: string;
+  manzana_id: number;
+  manzana_codigo?: string;
+  propietario: string;
+  cedula?: string;
+  telefono?: string;
+  estado_vivienda: string;
+  lectura_id?: number;
+  lectura_anterior: number;
+  lectura_actual?: number | null;
+  consumo_kwh: number;
+  consumo_subsidiado: number;
+  consumo_sin_subsidio: number;
+  precio_subsidiado: number;
+  precio_sin_subsidio: number;
+  cargo_toma_lectura: number;
+  cargo_alumbrado: number;
+  cargo_seguridad: number;
+  cargo_administracion: number;
+  cobros_fijos: number;
+  limite_subsidio: number;
+  tarifa_subsidiada: number;
+  tarifa_plena: number;
+  total_factura: number;
+  factura_id?: number;
+  factura_estado?: EstadoFactura;
+  lectura_estado?: string;
+  requiere_lectura: boolean;
+}
+
+export interface ClienteFactura {
+  id: number;
+  vivienda_id: number;
+  casa: string;
+  propietario: string;
+  cedula?: string;
+  ano: number;
+  mes: number;
+  ano_cobro: number;
+  mes_cobro: number;
+  numero_factura: string;
+  lectura_anterior?: number;
+  lectura_actual?: number;
+  consumo?: number;
+  total: number;
+  total_pagado: number;
+  saldo: number;
+  estado: string;
+  fecha_emision: string;
+}
+
+export interface ClienteResumen {
+  propietario: string;
+  cedula: string;
+  total_facturado: number;
+  total_pagado: number;
+  total_adeudado: number;
+  facturas_pendientes: number;
+  facturas_pagadas: number;
+  facturas_parciales: number;
+  al_dia: boolean;
+  facturas: ClienteFactura[];
+}
+
+export interface ClientePerfil {
+  nombre_completo: string;
+  cedula: string;
+  casa?: string;
+  telefono?: string;
+  whatsapp?: string;
+  email?: string;
+}
+
+export type EstadoCobroMensual = 'PAGADO' | 'PARCIAL' | 'DEBE';
+
+export type ConfiguracionPeriodo = {
+  periodo?: string;
+  anio: number;
+  mes: number;
+  limiteSubsidio: number;
+  tarifaSubsidiada: number;
+  tarifaPlena: number;
+};
+
+export type CasaPropietarioPeriodo = {
+  casaId: number;
+  propietarioId: number;
+  periodoId: number;
+  cargosFijosTotal: number;
+  cargosFijosDetalle?: Record<string, number>;
+  activo: boolean;
+};
+
+export type CalculoCobroInput = {
+  lecturaAnterior: number;
+  lecturaActual: number;
+  cargosFijosTotal: number;
+  configuracion: ConfiguracionPeriodo;
+};
+
+export type CalculoCobroResult = {
+  consumoTotal: number;
+  consumoConSubsidio: number;
+  consumoSinSubsidio: number;
+  valorSubsidiado: number;
+  valorSinSubsidio: number;
+  cargosFijosTotal: number;
+  totalCobrar: number;
+};
+
+export type LecturaMensualCalculada = {
+  periodoId: number;
+  casaId: number;
+  propietarioId: number;
+  lecturaAnterior: number;
+  lecturaActual?: number | null;
+  estadoCasa: 'activa' | 'inactiva' | 'vacia';
+  calculo?: CalculoCobroResult;
+};
+
+export type PagoMensual = {
+  cedula: string;
+  anio: number;
+  mes: number;
+  abono: number;
+  pin?: string;
+  fechaRecaudo?: string;
+  cuenta?: string;
+};

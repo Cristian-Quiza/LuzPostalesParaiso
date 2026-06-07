@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useQuery } from '@tanstack/react-query';
-import { formatCurrency, formatNumber, getCurrentPeriod, getMonthName } from '@/lib/utils';
+import { formatCurrency, getCurrentPeriod, getMonthName } from '@/lib/utils';
 import { BarChart3, TrendingUp, PieChart, CheckCircle, Clock, AlertCircle, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ReporteCartera } from '@/types';
@@ -39,11 +39,6 @@ export default function ReportesPage() {
     : '0';
 
   const disponibles = Array.from({ length: 5 }, (_, i) => (ano - i).toString());
-
-  const getPorcentaje = (pagado: number, total: number) => {
-    if (!total) return '0%';
-    return `${((pagado / total) * 100).toFixed(1)}%`;
-  };
 
   return (
     <div className="space-y-6">

@@ -18,6 +18,28 @@ export function formatNumber(num: number): string {
   return new Intl.NumberFormat('es-CO').format(num);
 }
 
+export function formatReading(num: number | null | undefined): string {
+  const value = Number(num ?? 0);
+  const hasDecimals = !Number.isInteger(value);
+  return new Intl.NumberFormat('es-CO', {
+    minimumFractionDigits: hasDecimals ? 2 : 0,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+export function formatKwh(num: number | null | undefined): string {
+  return formatReading(num);
+}
+
+export function formatReadingInputValue(num: number | null | undefined): string {
+  if (num === null || num === undefined) return '';
+  const value = Number(num);
+  if (Number.isNaN(value)) return '';
+  if (Number.isInteger(value)) return String(value);
+  const decimalCount = String(value).split('.')[1]?.length ?? 0;
+  return decimalCount < 2 ? value.toFixed(2) : String(value);
+}
+
 export function formatDate(date: string | Date): string {
   return new Intl.DateTimeFormat('es-CO', {
     year: 'numeric',

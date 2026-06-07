@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useMemo, useState, useRef } from 'react';
 import { useAuthStore } from '@/store/auth';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,19 @@ import { formatCurrency, getCurrentPeriod, getMonthName } from '@/lib/utils';
 import { Search, Receipt, CheckCircle, Clock, AlertCircle, Phone, Home, User, DollarSign, Download, Upload, FileSpreadsheet, List } from 'lucide-react';
 import { Factura, Vivienda, Pago } from '@/types';
 import * as XLSX from 'xlsx';
+import { toast } from 'sonner';
+
+type ExcelCell = string | number | boolean | Date | null | undefined;
+
+type PagoImportRow = {
+  cuenta: string;
+  cliente: string;
+  abono: number;
+  pin: string | null;
+  fecha_recaudo: string;
+  mes: number;
+  ano: number;
+};
 
 export default function RegistroPagosPage() {
   const { token } = useAuthStore();
@@ -22,11 +35,14 @@ export default function RegistroPagosPage() {
   const [showTable, setShowTable] = useState(true);
   const [filterAno, setFilterAno] = useState(currentAno.toString());
   const [filterMes, setFilterMes] = useState(currentMes.toString());
+  const [paymentSearch, setPaymentSearch] = useState('');
+  const [paymentManzanaFilter, setPaymentManzanaFilter] = useState('all');
 
   const [cedula, setCedula] = useState('');
   const [searchError, setSearchError] = useState('');
 
   const [pagoData, setPagoData] = useState({
+    tipo_pago: 'abono',
     monto: '',
     metodo_pago: 'efectivo',
     hora: '',
@@ -35,10 +51,11 @@ export default function RegistroPagosPage() {
   const [registroExitoso, setRegistroExitoso] = useState(false);
 
   const [showImportDialog, setShowImportDialog] = useState(false);
+  const [showClearPaymentsDialog, setShowClearPaymentsDialog] = useState(false);
   const [importResult, setImportResult] = useState<{success: number; success_list: string[]; errors: string[]} | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [parsedData, setParsedData] = useState<any[] | null>(null);
+  const [parsedData, setParsedData] = useState<PagoImportRow[] | null>(null);
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -52,12 +69,14 @@ export default function RegistroPagosPage() {
   });
 
   const { data: pagos, isLoading: loadingPagos } = useQuery<Pago[]>({
-    queryKey: ['pagos', filterAnoNum, filterMesNum],
+    queryKey: ['pagos', filterAnoNum, filterMesNum, paymentSearch, paymentManzanaFilter],
     queryFn: () => {
       let url = '/pagos';
       const params = new URLSearchParams();
       if (filterAnoNum) params.append('ano', filterAnoNum.toString());
       if (filterMesNum) params.append('mes', filterMesNum.toString());
+      if (paymentSearch.trim()) params.append('q', paymentSearch.trim());
+      if (paymentManzanaFilter !== 'all') params.append('manzana_id', paymentManzanaFilter);
       const queryString = params.toString();
       return api.get<Pago[]>(queryString ? `${url}?${queryString}` : url, token || undefined);
     },
@@ -70,19 +89,39 @@ export default function RegistroPagosPage() {
     enabled: !!token,
   });
 
+  const normalizeManzana = (value?: string | number | null) => {
+    const raw = String(value || '').trim();
+    if (!raw) return 'MZ';
+    return /^mz\b/i.test(raw) ? raw.replace(/\s+/g, ' ') : `MZ ${raw}`;
+  };
+
+  const getCasaLabel = (vivienda?: Pick<Vivienda, 'manzana_id' | 'manzana_codigo' | 'numero_casa'> | Pago) => {
+    if (!vivienda) return '-';
+    return `${normalizeManzana(vivienda.manzana_codigo || vivienda.manzana_id)} - C ${String(vivienda.numero_casa || '').padStart(2, '0')}`;
+  };
+
+  const manzanaOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    (viviendas || []).forEach((vivienda) => {
+      if (vivienda.manzana_id) map.set(vivienda.manzana_id, normalizeManzana(vivienda.manzana_codigo || vivienda.manzana_id));
+    });
+    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  }, [viviendas]);
+
   const registrarPagoMutation = useMutation({
-    mutationFn: ({ facturaId, data }: { facturaId: number; data: any }) =>
+    mutationFn: ({ facturaId, data }: { facturaId: number; data: Record<string, unknown> }) =>
       api.post(`/facturas/${facturaId}/pago`, data, token || undefined),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['facturas'] });
+      queryClient.invalidateQueries({ queryKey: ['pagos'] });
       setRegistroExitoso(true);
-      setPagoData({ monto: '', metodo_pago: 'efectivo', hora: '', observaciones: '' });
+      setPagoData({ tipo_pago: 'abono', monto: '', metodo_pago: 'efectivo', hora: '', observaciones: '' });
       setCedula('');
     },
   });
 
-  const importMutation = useMutation<{success: number; success_list: string[]; errors: string[]}, Error, any[]>({
-    mutationFn: async (data: any[]) => {
+  const importMutation = useMutation<{success: number; success_list: string[]; errors: string[]}, Error, PagoImportRow[]>({
+    mutationFn: async (data: PagoImportRow[]) => {
       const currentToken = useAuthStore.getState().token;
       if (!currentToken) throw new Error('No hay sesión activa');
       return api.post('/pagos/importar', data, currentToken);
@@ -93,8 +132,8 @@ export default function RegistroPagosPage() {
       queryClient.invalidateQueries({ queryKey: ['facturas'] });
       queryClient.invalidateQueries({ queryKey: ['pagos'] });
     },
-    onError: (error: any) => {
-      setImportResult({ success: 0, success_list: [], errors: [error?.message || 'Error al importar'] });
+    onError: (error) => {
+      setImportResult({ success: 0, success_list: [], errors: [error instanceof Error ? error.message : 'Error al importar'] });
       setIsImporting(false);
     },
   });
@@ -158,14 +197,14 @@ export default function RegistroPagosPage() {
         const workbook = XLSX.read(data, { type: 'binary' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+        const jsonData = XLSX.utils.sheet_to_json<ExcelCell[]>(worksheet, { header: 1 });
         
         if (jsonData.length < 2) {
           setParseErrors(['El archivo no contiene datos suficientes']);
           return;
         }
 
-        const headers = jsonData[0].map((h: any) => String(h || '').trim().toLowerCase().replace(/\s+/g, '_'));
+        const headers = jsonData[0].map((h) => String(h || '').trim().toLowerCase().replace(/\s+/g, '_'));
         
         const colIndex: Record<string, number> = {
           cuenta: headers.findIndex((h: string) => h.includes('cuenta')),
@@ -184,16 +223,16 @@ export default function RegistroPagosPage() {
           return;
         }
 
-        const validData: any[] = [];
+        const validData: PagoImportRow[] = [];
         const errors: string[] = [];
 
         for (let i = 1; i < jsonData.length; i++) {
           const row = jsonData[i];
-          if (!row || row.length === 0 || !row.some((cell: any) => cell)) continue;
+          if (!row || row.length === 0 || !row.some((cell) => cell)) continue;
 
           const index = i + 1;
           
-          const getValue = (key: string): any => {
+          const getValue = (key: string): ExcelCell => {
             const idx = colIndex[key as keyof typeof colIndex];
             return idx !== -1 ? row[idx] : undefined;
           };
@@ -297,7 +336,30 @@ export default function RegistroPagosPage() {
     }
   };
 
-  const viviendaEncontrada = viviendas?.find(v => v.cedula === cedula);
+  const viviendaEncontrada = viviendas?.find((v) => {
+    const term = cedula.trim().toLowerCase();
+    if (!term) return false;
+    return (
+      v.cedula?.toLowerCase() === term ||
+      v.propietario?.toLowerCase().includes(term) ||
+      getCasaLabel(v).toLowerCase().includes(term) ||
+      String(v.manzana_id || '').includes(term) ||
+      v.manzana_codigo?.toLowerCase().includes(term) ||
+      v.numero_casa?.toLowerCase() === term
+    );
+  });
+
+  const clearPagosMutation = useMutation({
+    mutationFn: () => api.delete('/pagos/all', token || undefined),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pagos'] });
+      setShowClearPaymentsDialog(false);
+      toast.success('Pagos eliminados');
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'No se pudieron eliminar los pagos');
+    },
+  });
   const facturaEncontrada = facturas?.find(f => f.vivienda_id === viviendaEncontrada?.id);
 
   const handleBuscar = () => {
@@ -333,6 +395,7 @@ export default function RegistroPagosPage() {
       facturaId: facturaEncontrada.id,
       data: {
         monto: parseFloat(pagoData.monto),
+        tipo_pago: pagoData.tipo_pago,
         metodo_pago: pagoData.metodo_pago,
         fecha_pago: fechaHora.toISOString(),
         concepto: pagoData.observaciones || `Pago período ${getMonthName(filterMesNum)} ${filterAnoNum}`,
@@ -436,8 +499,8 @@ export default function RegistroPagosPage() {
             <Upload className="h-4 w-4 mr-2" />
             Importar
           </Button>
-          <Button variant="outline" onClick={() => { if (confirm('¿Borrar TODOS los pagos importados? Esta acción no se puede deshacer.')) { api.delete('/pagos/all', token || undefined).then(() => { queryClient.invalidateQueries({ queryKey: ['pagos'] }); alert('Pagos eliminados'); }).catch((e) => alert('Error: ' + e.message)); } }} className="bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20">
-            🗑️ Limpiar Pagos
+          <Button variant="outline" onClick={() => setShowClearPaymentsDialog(true)} className="bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20">
+            Limpiar Pagos
           </Button>
         </div>
       </div>
@@ -468,6 +531,28 @@ export default function RegistroPagosPage() {
                 <SelectContent>
                   {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
                     <SelectItem key={m} value={m.toString()}>{getMonthName(m)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex min-w-[220px] flex-1 flex-col gap-1">
+              <label className="text-xs text-white/50 font-medium">Buscar pago</label>
+              <Input
+                value={paymentSearch}
+                onChange={(event) => setPaymentSearch(event.target.value)}
+                placeholder="Manzana, cedula, nombre, casa, factura o referencia"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-white/50 font-medium">Manzana</label>
+              <Select value={paymentManzanaFilter} onValueChange={setPaymentManzanaFilter}>
+                <SelectTrigger className="w-[150px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  {manzanaOptions.map(([id, label]) => (
+                    <SelectItem key={id} value={String(id)}>{label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -527,7 +612,7 @@ export default function RegistroPagosPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          {pago.numero_casa ? `MZ ${pago.manzana_id} - ${pago.numero_casa}` : '-'}
+                          {pago.numero_casa ? getCasaLabel(pago) : '-'}
                         </TableCell>
                         <TableCell>{getMetodoBadge(pago.metodo_pago)}</TableCell>
                         <TableCell className="text-right text-green-500 font-medium">
@@ -715,6 +800,25 @@ export default function RegistroPagosPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={showClearPaymentsDialog} onOpenChange={setShowClearPaymentsDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Limpiar pagos importados</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Esta acción borrará los pagos registrados por el endpoint de limpieza. No se puede deshacer.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowClearPaymentsDialog(false)}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={() => clearPagosMutation.mutate()} disabled={clearPagosMutation.isPending}>
+              {clearPagosMutation.isPending ? 'Eliminando...' : 'Eliminar pagos'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Formulario de Registro (solo visible cuando no está en modo tabla) */}
       {!showTable && (
         <>
@@ -782,7 +886,7 @@ export default function RegistroPagosPage() {
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Casa</p>
-                        <p className="font-medium">MZ {viviendaEncontrada.manzana_id} - {viviendaEncontrada.numero_casa}</p>
+                        <p className="font-medium">{getCasaLabel(viviendaEncontrada)}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
@@ -839,6 +943,18 @@ export default function RegistroPagosPage() {
                     )}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div>
+                        <Label htmlFor="tipo_pago">Tipo</Label>
+                        <Select value={pagoData.tipo_pago} onValueChange={(v) => setPagoData({ ...pagoData, tipo_pago: v, monto: v === 'pago_total' ? String(Math.round(saldoPendiente)) : pagoData.monto })}>
+                          <SelectTrigger className="mt-1">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="abono">Abono</SelectItem>
+                            <SelectItem value="pago_total">Pago total</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                       <div>
                         <Label htmlFor="monto">Valor del Pago</Label>
                         <Input
@@ -904,7 +1020,7 @@ export default function RegistroPagosPage() {
                         variant="outline"
                         onClick={() => {
                           setCedula('');
-                          setPagoData({ monto: '', metodo_pago: 'efectivo', hora: '', observaciones: '' });
+                          setPagoData({ tipo_pago: 'abono', monto: '', metodo_pago: 'efectivo', hora: '', observaciones: '' });
                           setRegistroExitoso(false);
                         }}
                       >

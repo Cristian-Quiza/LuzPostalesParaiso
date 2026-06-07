@@ -11,7 +11,6 @@ import {
   Users,
   Settings,
   LogOut,
-  Zap,
   Menu,
   X,
   Bell,
@@ -35,9 +34,10 @@ const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Viviendas', href: '/viviendas', icon: Home },
   { name: 'Lecturas', href: '/lecturas', icon: ClipboardList },
+  { name: 'Facturación', href: '/facturacion', icon: ListChecks },
+  { name: 'Control de Cobros y Pagos', href: '/control-pagos', icon: ListChecks },
   { name: 'Facturas', href: '/facturas', icon: FileText },
   { name: 'Registro de Pagos', href: '/registro-pagos', icon: DollarSign },
-  { name: 'Control de Pagos', href: '/control-pagos', icon: ListChecks },
   { name: 'Reportes', href: '/reportes', icon: BarChart3 },
   { name: 'Estado de Cuenta', href: '/estado-cuenta', icon: Receipt },
   { name: 'Perfil', href: '/perfil', icon: User },
@@ -75,7 +75,7 @@ export function Layout({ children }: LayoutProps) {
   });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+    <div className="min-h-screen bg-gradient-to-br from-slate-800 via-slate-700 to-slate-800">
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">

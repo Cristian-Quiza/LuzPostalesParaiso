@@ -259,3 +259,22 @@ select option {
     margin: 10mm;
   }
 }
+
+/* Ajuste visual: reduce sombreado excesivo al ingresar */
+.from-black\/80.via-black\/40.to-black\/20 {
+  --tw-gradient-from: rgb(0 0 0 / 0.55) var(--tw-gradient-from-position);
+  --tw-gradient-to: rgb(0 0 0 / 0.1) var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), rgb(0 0 0 / 0.25) var(--tw-gradient-via-position), var(--tw-gradient-to);
+}
+
+.bg-primary\/10.backdrop-blur-\[2px\] {
+  background-color: hsl(var(--primary) / 0.05);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.from-slate-900.via-slate-800.to-slate-900 {
+  --tw-gradient-from: rgb(30 41 59 / 1) var(--tw-gradient-from-position);
+  --tw-gradient-to: rgb(30 41 59 / 1) var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), rgb(51 65 85 / 1) var(--tw-gradient-via-position), var(--tw-gradient-to);
+}

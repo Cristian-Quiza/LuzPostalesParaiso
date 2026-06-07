@@ -19,33 +19,34 @@ def init_database():
         existing_user = db.query(Usuario).filter(Usuario.username == "admin").first()
         if existing_user:
             print("El usuario admin ya existe")
-            return
+        else:
+            print("Creando usuario administrador...")
+            admin = Usuario(
+                email="admin@portales.com",
+                username="admin",
+                hashed_password=get_password_hash("admin123"),
+                nombre_completo="Administrador Principal",
+                telefono="+573001234567",
+                whatsapp="+573001234567",
+                rol=RoleEnum.SUPER_ADMIN,
+                is_superuser=True,
+                is_active=True
+            )
+            db.add(admin)
         
-        print("Creando usuario administrador...")
-        admin = Usuario(
-            email="admin@portales.com",
-            username="admin",
-            hashed_password=get_password_hash("admin123"),
-            nombre_completo="Administrador Principal",
-            telefono="+573001234567",
-            whatsapp="+573001234567",
-            rol=RoleEnum.SUPER_ADMIN,
-            is_superuser=True,
-            is_active=True
-        )
-        db.add(admin)
-        
-        print("Creando manzanas...")
-        manzanas = [
-            Manzana(codigo="MZ 183", nombre="Manzana 183", descripcion="Primera manzana del conjunto"),
-            Manzana(codigo="MZ 184", nombre="Manzana 184", descripcion="Segunda manzana del conjunto"),
-            Manzana(codigo="MZ 185", nombre="Manzana 185", descripcion="Tercera manzana del conjunto"),
-            Manzana(codigo="MZ 186", nombre="Manzana 186", descripcion="Cuarta manzana del conjunto"),
+        print("Validando manzanas...")
+        manzanas_objetivo = [
+            ("MZ 183", "Manzana 183", "Primera manzana del conjunto"),
+            ("MZ 184", "Manzana 184", "Segunda manzana del conjunto"),
+            ("MZ 185", "Manzana 185", "Tercera manzana del conjunto"),
+            ("MZ 186", "Manzana 186", "Cuarta manzana del conjunto"),
         ]
-        db.add_all(manzanas)
+        for codigo, nombre, descripcion in manzanas_objetivo:
+            if not db.query(Manzana).filter(Manzana.codigo == codigo).first():
+                db.add(Manzana(codigo=codigo, nombre=nombre, descripcion=descripcion))
         db.commit()
         
-        print("Creando viviendas de ejemplo...")
+        print("Validando viviendas de ejemplo...")
         propietarios_ejemplo = [
             ("Claudia Patricia Ocampo Restrepo", "40361567", "3133241618", "claudia@email.com"),
             ("María García", "23456789", "3132222222", "maria@email.com"),
@@ -68,78 +69,79 @@ def init_database():
             ("Julián Andrés", "99001122", "3132020202", "julian@email.com"),
         ]
         
-        manzanas_db = db.query(Manzana).all()
-        viviendas = []
+        manzanas_db = db.query(Manzana).order_by(Manzana.codigo).all()
+        if db.query(Vivienda).count() == 0 and manzanas_db:
+            viviendas = []
+            for i, (nombre, cedula, tel, email) in enumerate(propietarios_ejemplo):
+                manzana_idx = i % len(manzanas_db)
+                numero_casa = (i % 5) + 1
+                tiene_seguridad = i % 2 == 0
+                
+                v = Vivienda(
+                    numero_casa=str(numero_casa),
+                    manzana_id=manzanas_db[manzana_idx].id,
+                    propietario=nombre,
+                    cedula=cedula,
+                    telefono=tel,
+                    whatsapp=tel,
+                    email=email,
+                    direccion=f"Calle {numero_casa} # {i+10}-{i+20}",
+                    tiene_alumbrado=True,
+                    tiene_seguridad=tiene_seguridad,
+                    tiene_toma_lectura=True,
+                    tiene_administracion=False,
+                    saldo_a_favor=0,
+                    estado="activo"
+                )
+                viviendas.append(v)
+            db.add_all(viviendas)
         
-        # Distribución de viviendas por manzana
-        # MZ 183: 5 casas, MZ 184: 5 casas, MZ 185: 5 casas, MZ 186: 5 casas
-        
-        for i, (nombre, cedula, tel, email) in enumerate(propietarios_ejemplo):
-            # Repartir equitativamente entre las 4 manzanas
-            manzana_idx = i % len(manzanas_db)
-            numero_casa = (i % 5) + 1
-            tiene_seguridad = i % 2 == 0
-        
-        for i, (nombre, cedula, tel, email) in enumerate(propietarios_ejemplo):
-            manzana_idx = i % len(manzanas_db)
-            tiene_seguridad = i % 2 == 0
-            
-            v = Vivienda(
-                numero_casa=str(numero_casa),
-                manzana_id=manzanas_db[manzana_idx].id,
-                propietario=nombre,
-                cedula=cedula,
-                telefono=tel,
-                whatsapp=tel,
-                email=email,
-                direccion=f"Calle {numero_casa} # {i+10}-{i+20}",
-                tiene_alumbrado=True,
-                tiene_seguridad=tiene_seguridad,
-                tiene_toma_lectura=True,
-                tiene_administracion=False,
-                saldo_a_favor=0,
-                estado="activo"
-            )
-            viviendas.append(v)
-        
-        db.add_all(viviendas)
-        
-        print("Creando tarifas del mes actual...")
+        print("Validando tarifas del mes actual...")
         from datetime import datetime
         now = datetime.now()
-        
-        tarifa = Tarifa(
-            ano=now.year,
-            mes=now.month,
-            costo_kwh_subsidiado=285.0,
-            costo_kwh_pleno=582.0,
-            consumo_tope_subsidiado=184,
-            cargo_alumbrado=15000,
-            cargo_seguridad=35000,
-            cargo_toma_lectura=2000,
-            cargo_administracion=0,
-            fecha_limite_pago=20,
-            intereses_mora=0.02
-        )
-        db.add(tarifa)
+        tarifa_existente = db.query(Tarifa).filter(Tarifa.ano == now.year, Tarifa.mes == now.month).first()
+        if not tarifa_existente:
+            tarifa = Tarifa(
+                ano=now.year,
+                mes=now.month,
+                costo_kwh_subsidiado=285.0,
+                costo_kwh_pleno=582.0,
+                consumo_tope_subsidiado=184,
+                cargo_alumbrado=15000,
+                cargo_seguridad=35000,
+                cargo_toma_lectura=2000,
+                cargo_administracion=0,
+                fecha_limite_pago=20,
+                intereses_mora=0.02
+            )
+            db.add(tarifa)
         
         print("Creando configuraciones generales...")
+        periodo_mes = str(now.month).zfill(2)
         configuraciones = [
-            Configuracion(clave="nombre_barrio", valor="PORTALES DEL PARAISO", descripcion="Nombre del conjunto residencial"),
-            Configuracion(clave="lider_comunitario", valor="CRISTIAN DAVID QUIZA PAMPLONA", descripcion="Nombre del líder comunitario"),
-            Configuracion(clave="macro_medidor", valor="84440422", descripcion="Número del macro medidor"),
-            Configuracion(clave="codigo_cliente", valor="458432252", descripcion="Código de cliente del servicio"),
-            Configuracion(clave="limite_subsidio", valor="184", descripcion="Límite de consumo subsidiado en kWh"),
-            Configuracion(clave="precio_kwh_subsidiado", valor="369.77", descripcion="Precio por kWh con subsidio"),
-            Configuracion(clave="precio_kwh_sin_subsidio", valor="783.00", descripcion="Precio por kWh sin subsidio"),
-            Configuracion(clave="costo_toma_lectura", valor="4500", descripcion="Costo por toma de lectura"),
-            Configuracion(clave="costo_alumbrado", valor="3000", descripcion="Costo de alumbrado público"),
-            Configuracion(clave="costo_seguridad", valor="2000", descripcion="Costo de seguridad"),
-            Configuracion(clave="periodo_anio", valor="2026", descripcion="Año actual de facturación"),
-            Configuracion(clave="periodo_mes", valor="03", descripcion="Período de corte actual"),
-            Configuracion(clave="periodo_actual", valor="FEBRERO01 - MARZO01", descripcion="Período a facturar (mes vencido)"),
+            Configuracion(clave="nombre_barrio", valor="PORTALES DEL PARAISO", descripcion="Nombre del conjunto residencial", anio=now.year, periodo_mes=periodo_mes),
+            Configuracion(clave="lider_comunitario", valor="CRISTIAN DAVID QUIZA PAMPLONA", descripcion="Nombre del líder comunitario", anio=now.year, periodo_mes=periodo_mes),
+            Configuracion(clave="macro_medidor", valor="84440422", descripcion="Número del macro medidor", anio=now.year, periodo_mes=periodo_mes),
+            Configuracion(clave="codigo_cliente", valor="458432252", descripcion="Código de cliente del servicio", anio=now.year, periodo_mes=periodo_mes),
+            Configuracion(clave="limite_subsidio", valor="184", descripcion="Límite de consumo subsidiado en kWh", anio=now.year, periodo_mes=periodo_mes),
+            Configuracion(clave="precio_kwh_subsidiado", valor="369.77", descripcion="Precio por kWh con subsidio", anio=now.year, periodo_mes=periodo_mes),
+            Configuracion(clave="precio_kwh_sin_subsidio", valor="783.00", descripcion="Precio por kWh sin subsidio", anio=now.year, periodo_mes=periodo_mes),
+            Configuracion(clave="costo_toma_lectura", valor="4500", descripcion="Costo por toma de lectura", anio=now.year, periodo_mes=periodo_mes),
+            Configuracion(clave="costo_alumbrado", valor="3000", descripcion="Costo de alumbrado público", anio=now.year, periodo_mes=periodo_mes),
+            Configuracion(clave="costo_seguridad", valor="2000", descripcion="Costo de seguridad", anio=now.year, periodo_mes=periodo_mes),
+            Configuracion(clave="periodo_anio", valor=str(now.year), descripcion="Año actual de facturación", anio=now.year, periodo_mes=periodo_mes),
+            Configuracion(clave="periodo_mes", valor=periodo_mes, descripcion="Período de corte actual", anio=now.year, periodo_mes=periodo_mes),
+            Configuracion(clave="periodo_actual", valor="FEBRERO01 - MARZO01", descripcion="Período a facturar (mes vencido)", anio=now.year, periodo_mes=periodo_mes),
         ]
-        db.add_all(configuraciones)
+        for c in configuraciones:
+            existe = db.query(Configuracion).filter(
+                Configuracion.clave == c.clave,
+                Configuracion.anio == c.anio,
+                Configuracion.periodo_mes == c.periodo_mes,
+                Configuracion.activa == True
+            ).first()
+            if not existe:
+                db.add(c)
         
         db.commit()
         print("Base de datos inicializada correctamente")

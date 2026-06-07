@@ -9,12 +9,15 @@ class RoleEnum(str, enum.Enum):
     SUPER_ADMIN = "super_admin"
     EDITOR = "editor"
     LECTOR = "lector"
+    CLIENTE = "cliente"
 
 class EstadoFacturaEnum(str, enum.Enum):
     PENDIENTE = "pendiente"
     PAGADA = "pagada"
     PARCIAL = "parcial"
     VENCIDA = "vencida"
+    ANULADA = "anulada"
+    CORREGIDA = "corregida"
 
 class TipoServicioEnum(str, enum.Enum):
     ALUMBRADO = "alumbrado"
@@ -125,9 +128,10 @@ class Lectura(Base):
     ano = Column(Integer, nullable=False)
     mes = Column(Integer, nullable=False)
     
-    lectura_anterior = Column(Integer)
-    lectura_actual = Column(Integer, nullable=False)
-    consumo = Column(Integer)
+    lectura_anterior = Column(Float)
+    lectura_actual = Column(Float, nullable=True)
+    consumo = Column(Float)
+    estado = Column(String(30), default="borrador")
     
     sincronizado = Column(Boolean, default=True)
     offline_id = Column(String(50))
@@ -153,12 +157,12 @@ class Factura(Base):
     ano = Column(Integer, nullable=False)
     mes = Column(Integer, nullable=False)
     
-    lectura_anterior = Column(Integer)
-    lectura_actual = Column(Integer)
-    consumo = Column(Integer)
+    lectura_anterior = Column(Float)
+    lectura_actual = Column(Float)
+    consumo = Column(Float)
     
-    kwh_subsidiados = Column(Integer)
-    kwh_excedente = Column(Integer)
+    kwh_subsidiados = Column(Float)
+    kwh_excedente = Column(Float)
     costo_subsidiado = Column(Float)
     costo_excedente = Column(Float)
     subtotal_energia = Column(Float)
@@ -191,6 +195,51 @@ class Factura(Base):
         Index('idx_factura_vivienda_periodo', 'vivienda_id', 'ano', 'mes', unique=True),
     )
 
+class FacturacionMensual(Base):
+    __tablename__ = "facturacion_mensual"
+
+    id = Column(Integer, primary_key=True, index=True)
+    factura_id = Column(Integer, ForeignKey("facturas.id"), nullable=False, unique=True)
+    vivienda_id = Column(Integer, ForeignKey("viviendas.id"), nullable=False)
+
+    ano_cobro = Column(Integer, nullable=False)
+    mes_cobro = Column(Integer, nullable=False)
+    ano_consumo = Column(Integer, nullable=False)
+    mes_consumo = Column(Integer, nullable=False)
+
+    casa = Column(String(50), nullable=False)
+    nombre = Column(String(255), nullable=False)
+    cedula = Column(String(20))
+
+    lectura_anterior = Column(Float, default=0)
+    lectura_actual = Column(Float, default=0)
+    consumo_kwh = Column(Float, default=0)
+    consumo_subsidio = Column(Float, default=0)
+    consumo_sin_subsidio = Column(Float, default=0)
+    valor_subsidio = Column(Float, default=0)
+    valor_sin_subsidio = Column(Float, default=0)
+
+    toma_lectura = Column(Float, default=0)
+    alumbrado = Column(Float, default=0)
+    seguridad = Column(Float, default=0)
+    administracion = Column(Float, default=0)
+
+    subtotal = Column(Float, default=0)
+    descuento_porcentaje = Column(Float, default=0)
+    valor_descuento = Column(Float, default=0)
+    total_a_pagar = Column(Float, default=0)
+    pago = Column(Float, default=0)
+    saldo = Column(Float, default=0)
+    estado = Column(String(30), default="pendiente")
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_facturacion_mensual_cobro", "ano_cobro", "mes_cobro"),
+        Index("idx_facturacion_mensual_vivienda_cobro", "vivienda_id", "ano_cobro", "mes_cobro", unique=True),
+    )
+
 class Pago(Base):
     __tablename__ = "pagos"
     
@@ -204,6 +253,9 @@ class Pago(Base):
     metodo_pago = Column(String(50))
     fecha_pago = Column(DateTime(timezone=True), nullable=False)
     referencia = Column(String(100))
+    tipo_pago = Column(String(30), default="abono")
+    periodo_ano = Column(Integer)
+    periodo_mes = Column(Integer)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
@@ -213,6 +265,8 @@ class Pago(Base):
     
     __table_args__ = (
         Index('idx_pago_factura_fecha', 'factura_id', 'fecha_pago'),
+        Index('idx_pago_periodo', 'periodo_ano', 'periodo_mes'),
+        Index('idx_pago_vivienda_periodo', 'vivienda_id', 'periodo_ano', 'periodo_mes'),
     )
 
 class Configuracion(Base):

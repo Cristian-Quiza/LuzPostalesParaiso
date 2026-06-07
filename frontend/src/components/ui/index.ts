@@ -8,4 +8,3 @@ export { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 export { Toggle, ToggleCard } from './toggle';
 export { Alert, AlertDescription } from './alert';
 export { Tabs, TabsContent, TabsList, TabsTrigger } from './tabs';
-export { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from './dropdown-menu';

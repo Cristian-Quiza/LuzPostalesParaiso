@@ -11,11 +11,26 @@ import { Label } from '@/components/ui/label';
 import { Toggle } from '@/components/ui/toggle';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
-import { Plus, Search, Phone, Mail, MessageCircle, Home as HomeIcon, Zap, Shield, Trash2, X, Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, Upload, FileSpreadsheet, AlertCircle } from 'lucide-react';
+import { Plus, Search, Phone, MessageCircle, Home as HomeIcon, Zap, Shield, Trash2, Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, Upload, FileSpreadsheet, AlertCircle } from 'lucide-react';
 import { Vivienda, Manzana } from '@/types';
 import * as XLSX from 'xlsx';
 
 const ITEMS_PER_PAGE = 7;
+
+type ImportVivienda = Partial<Vivienda> & {
+  manzana_codigo?: string;
+};
+
+type ExcelRow = Record<string, string | number | boolean | Date | null | undefined>;
+
+const getErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && error && 'response' in error) {
+    const response = (error as { response?: { data?: { detail?: string } } }).response;
+    if (response?.data?.detail) return response.data.detail;
+  }
+  return fallback;
+};
 
 export default function ViviendasPage() {
   const { token, usuario } = useAuthStore();
@@ -33,6 +48,7 @@ export default function ViviendasPage() {
   const [deleteConfirmData, setDeleteConfirmData] = useState<{id: number; nombre: string; casa: string} | null>(null);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [importResult, setImportResult] = useState<{success: number; successList: string[]; errors: string[]} | null>(null);
+  const [pendingImportRows, setPendingImportRows] = useState<ImportVivienda[]>([]);
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -42,7 +58,7 @@ export default function ViviendasPage() {
 
   const canEdit = usuario?.rol === 'super_admin' || usuario?.rol === 'editor';
 
-  const { data: viviendas, isLoading } = useQuery<Vivienda[]>({
+  const { data: viviendas, isLoading, error: viviendasError } = useQuery<Vivienda[]>({
     queryKey: ['viviendas', manzanaFilter],
     queryFn: () => {
       const url = manzanaFilter !== 'all' 
@@ -59,6 +75,91 @@ export default function ViviendasPage() {
     enabled: !!token,
   });
 
+  const getManzanaLabelById = (id: number | string) => {
+    const manzana = manzanasData?.find((m) => String(m.id) === String(id));
+    return manzana?.codigo || `MZ ${id}`;
+  };
+
+  const sortByCasa = (a: Pick<Vivienda, 'manzana_id' | 'numero_casa'>, b: Pick<Vivienda, 'manzana_id' | 'numero_casa'>) => {
+    const manzanaDiff = Number(a.manzana_id) - Number(b.manzana_id);
+    if (manzanaDiff !== 0) return manzanaDiff;
+    const casaDiff = Number(a.numero_casa) - Number(b.numero_casa);
+    if (!Number.isNaN(casaDiff) && casaDiff !== 0) return casaDiff;
+    return String(a.numero_casa).localeCompare(String(b.numero_casa), 'es', { numeric: true });
+  };
+
+  const normalizeHeader = (value: string) =>
+    value
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]/g, '');
+
+  const getCellValue = (row: ExcelRow, aliases: string[]) => {
+    const normalizedAliases = aliases.map(normalizeHeader);
+    const key = Object.keys(row).find((header) =>
+      normalizedAliases.includes(normalizeHeader(header))
+    );
+    return key ? row[key] : undefined;
+  };
+
+  const parseCasaReferencia = (value: unknown) => {
+    const raw = String(value || '').trim().toUpperCase();
+    const mzMatch = raw.match(/MZ\s*\.?\s*(\d+)/);
+    const casaMatch = raw.match(/(?:CASA|C)\s*\.?\s*0*(\d+)/);
+    return {
+      manzanaNumero: mzMatch?.[1],
+      numeroCasa: casaMatch?.[1] ? casaMatch[1].padStart(2, '0') : undefined,
+    };
+  };
+
+  const resolveManzanaFromImport = (value: unknown, casaValue: unknown) => {
+    const raw = String(value || '').trim();
+    const casaParsed = parseCasaReferencia(casaValue);
+    const manzanaNumero =
+      parseCasaReferencia(raw).manzanaNumero ||
+      casaParsed.manzanaNumero ||
+      raw.match(/\d+/)?.[0];
+
+    if (!manzanaNumero) {
+      return { id: undefined, codigo: undefined };
+    }
+
+    const codigo = `MZ ${manzanaNumero}`;
+    const existing = manzanasData?.find((m) => {
+      const codigoNumero = m.codigo.match(/\d+/)?.[0];
+      return (
+        String(m.id) === raw ||
+        normalizeHeader(m.codigo) === normalizeHeader(raw) ||
+        codigoNumero === manzanaNumero
+      );
+    });
+
+    return { id: existing?.id, codigo };
+  };
+
+  const normalizeCasaNumber = (value: unknown, casaValue: unknown) => {
+    const parsed =
+      parseCasaReferencia(casaValue).numeroCasa ||
+      parseCasaReferencia(value).numeroCasa;
+    if (parsed) return parsed;
+
+    const raw = String(value || '').trim();
+    const digits = raw.match(/\d+/)?.[0];
+    return digits ? digits.padStart(2, '0') : raw;
+  };
+
+  const invalidateAllRelated = () => {
+    queryClient.invalidateQueries({ queryKey: ['viviendas'] });
+    queryClient.invalidateQueries({ queryKey: ['control-cobros-planilla'] });
+    queryClient.invalidateQueries({ queryKey: ['control-cobros-facturas'] });
+    queryClient.invalidateQueries({ queryKey: ['facturas'] });
+    queryClient.invalidateQueries({ queryKey: ['lecturas'] });
+    queryClient.invalidateQueries({ queryKey: ['planilla'] });
+    queryClient.invalidateQueries({ queryKey: ['pagos'] });
+    queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+  };
+
   const createMutation = useMutation({
     mutationFn: (data: Partial<Vivienda>) => {
       const currentToken = useAuthStore.getState().token;
@@ -66,13 +167,13 @@ export default function ViviendasPage() {
       return api.post('/vivienda', data, currentToken);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['viviendas'] });
+      invalidateAllRelated();
       setIsDialogOpen(false);
       setEditingVivienda(null);
       setErrorMessage('');
     },
-    onError: (error: any) => {
-      setErrorMessage(error?.message || error?.response?.data?.detail || 'Error al crear la vivienda');
+    onError: (error) => {
+      setErrorMessage(getErrorMessage(error, 'Error al crear la vivienda'));
     },
   });
 
@@ -83,13 +184,13 @@ export default function ViviendasPage() {
       return api.put(`/viviendas/${id}`, data, currentToken);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['viviendas'] });
+      invalidateAllRelated();
       setIsDialogOpen(false);
       setEditingVivienda(null);
       setErrorMessage('');
     },
-    onError: (error: any) => {
-      const message = error?.response?.data?.detail || error?.message || 'Error al actualizar la vivienda';
+    onError: (error) => {
+      const message = getErrorMessage(error, 'Error al actualizar la vivienda');
       setErrorMessage(message);
     },
   });
@@ -101,15 +202,18 @@ export default function ViviendasPage() {
       return api.delete(`/viviendas/${id}`, currentToken);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['viviendas'] });
+      invalidateAllRelated();
+      setDeleteConfirmId(null);
+      setDeleteConfirmData(null);
+      setErrorMessage('');
     },
-    onError: (error: any) => {
-      setErrorMessage(error?.message || error?.response?.data?.detail || 'Error al eliminar la vivienda');
+    onError: (error) => {
+      setErrorMessage(getErrorMessage(error, 'Error al eliminar la vivienda'));
     },
   });
 
   const importMutation = useMutation({
-    mutationFn: async (data: Partial<Vivienda>[]) => {
+    mutationFn: async (data: ImportVivienda[]) => {
       const currentToken = useAuthStore.getState().token;
       if (!currentToken) throw new Error('No hay sesión activa');
       const results = { 
@@ -117,17 +221,48 @@ export default function ViviendasPage() {
         successList: [] as string[], 
         errors: [] as string[] 
       };
+      const manzanaCache = new Map(
+        (manzanasData || []).map((m) => [normalizeHeader(m.codigo), m])
+      );
+
+      const getOrCreateManzanaId = async (item: ImportVivienda) => {
+        if (item.manzana_id) return item.manzana_id;
+        if (!item.manzana_codigo) {
+          throw new Error('La manzana no se pudo identificar');
+        }
+
+        const cacheKey = normalizeHeader(item.manzana_codigo);
+        const cached = manzanaCache.get(cacheKey);
+        if (cached) return cached.id;
+
+        const created = await api.post<Manzana>(
+          '/manzana',
+          {
+            codigo: item.manzana_codigo,
+            nombre: item.manzana_codigo,
+            descripcion: 'Creada automaticamente desde importacion de viviendas',
+          },
+          currentToken
+        );
+        manzanaCache.set(cacheKey, created);
+        return created.id;
+      };
       
       for (const item of data) {
         try {
-          await api.post('/vivienda', item, currentToken);
+          const manzanaId = await getOrCreateManzanaId(item);
+          const { manzana_codigo, ...payload } = item;
+          await api.post('/vivienda', { ...payload, manzana_id: manzanaId }, currentToken);
           results.success++;
-          results.successList.push(`${item.propietario} (MZ ${item.manzana_id} - Casa ${item.numero_casa})`);
-        } catch (error: any) {
-          if (error?.response?.status === 400 || error?.response?.status === 409) {
+          results.successList.push(`${item.propietario} (${item.manzana_codigo || getManzanaLabelById(manzanaId)} - C ${item.numero_casa})`);
+        } catch (error) {
+          const status = typeof error === 'object' && error && 'response' in error
+            ? (error as { response?: { status?: number } }).response?.status
+            : undefined;
+          if (status === 400 || status === 409) {
             results.errors.push(`Omitido: ${item.propietario} (ya existe)`);
           } else {
-            results.errors.push(`Error en ${item.propietario}: ${error?.message || 'Error desconocido'}`);
+            results.errors.push(`Error en ${item.propietario}: ${getErrorMessage(error, 'Error desconocido')}`);
           }
         }
       }
@@ -135,18 +270,20 @@ export default function ViviendasPage() {
     },
     onSuccess: (results) => {
       setImportResult(results);
+      setPendingImportRows([]);
       setIsImporting(false);
       queryClient.invalidateQueries({ queryKey: ['viviendas'] });
+      queryClient.invalidateQueries({ queryKey: ['manzana'] });
     },
-    onError: (error: any) => {
-      setImportResult({ success: 0, successList: [], errors: [error?.message || 'Error al importar'] });
+    onError: (error) => {
+      setImportResult({ success: 0, successList: [], errors: [getErrorMessage(error, 'Error al importar')] });
       setIsImporting(false);
     },
   });
 
   const exportToExcel = () => {
     const dataToExport = filteredViviendas?.map((v) => ({
-      'Manzana': v.manzana_id,
+      'Manzana': v.manzana_codigo || getManzanaLabelById(v.manzana_id),
       'Número Casa': v.numero_casa,
       'Propietario': v.propietario,
       'Cédula': v.cedula || '',
@@ -217,12 +354,94 @@ export default function ViviendasPage() {
         const workbook = XLSX.read(data, { type: 'binary' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet) as Record<string, any>[];
+        const jsonData = XLSX.utils.sheet_to_json<ExcelRow>(worksheet);
+
+        {
+          const headers = Object.keys(jsonData[0] || {});
+          const hasColumn = (aliases: string[]) => {
+            const normalizedAliases = aliases.map(normalizeHeader);
+            return headers.some((header) => normalizedAliases.includes(normalizeHeader(header)));
+          };
+
+          if (!hasColumn(['Manzana', 'MZ', 'CASA', 'Casa']) || !hasColumn(['Propietario', 'Nombre', 'NOMBRE'])) {
+            setImportResult({
+              success: 0,
+              successList: [],
+              errors: ['El archivo debe tener columnas de casa/manzana y propietario/nombre. Puede usar la plantilla o el Excel de facturacion.']
+            });
+            setIsImporting(false);
+            return;
+          }
+
+          const validData: ImportVivienda[] = [];
+          const formatErrors: string[] = [];
+
+          jsonData.forEach((row, index) => {
+            const casaReferencia = getCellValue(row, ['CASA', 'Casa']);
+            const manzanaValue = getCellValue(row, ['Manzana', 'MZ', 'Manzana ID']) || casaReferencia;
+            const numeroCasaValue = getCellValue(row, ['Numero Casa', 'Numero de Casa', 'Número Casa', 'Casa Numero']) || casaReferencia;
+            const propietario = String(getCellValue(row, ['Propietario', 'Nombre', 'NOMBRE']) || '').trim();
+            const manzana = resolveManzanaFromImport(manzanaValue, casaReferencia);
+            const numeroCasa = normalizeCasaNumber(numeroCasaValue, casaReferencia);
+
+            if (!manzana.codigo) {
+              formatErrors.push(`Fila ${index + 2}: Manzana invalida`);
+              return;
+            }
+            if (!numeroCasa) {
+              formatErrors.push(`Fila ${index + 2}: Numero de casa requerido`);
+              return;
+            }
+            if (!propietario || propietario.length < 3) {
+              formatErrors.push(`Fila ${index + 2}: Propietario requerido`);
+              return;
+            }
+
+            const seguridadRaw = String(getCellValue(row, ['Seguridad', 'Seguri', 'SEGURIDAD']) || 'No').toLowerCase();
+            const estadoRaw = String(getCellValue(row, ['Estado', 'ESTADO']) || 'activo').toLowerCase();
+
+            validData.push({
+              manzana_id: manzana.id,
+              manzana_codigo: manzana.codigo,
+              numero_casa: numeroCasa,
+              propietario,
+              cedula: String(getCellValue(row, ['Cedula', 'Cédula', 'C.C.', 'CC']) || '').trim() || undefined,
+              telefono: String(getCellValue(row, ['Telefono', 'Teléfono', 'Celular', 'CEL', 'Contacto']) || '').trim() || undefined,
+              whatsapp: String(getCellValue(row, ['WhatsApp', 'Whatsapp', 'Telefono', 'Teléfono', 'Celular', 'CEL']) || '').trim() || undefined,
+              email: String(getCellValue(row, ['Email', 'Correo']) || '').trim() || undefined,
+              direccion: String(getCellValue(row, ['Direccion', 'Dirección', 'DIRECCION']) || '').trim() || `${manzana.codigo} - Casa ${numeroCasa}`,
+              tiene_alumbrado: String(getCellValue(row, ['Alumbrado', 'Alumbra', 'ALUMBRADO']) || 'Si').toLowerCase() !== 'no',
+              tiene_seguridad: seguridadRaw === 'si' || seguridadRaw === 'sí' || seguridadRaw === 'true' || seguridadRaw === '1',
+              estado: estadoRaw.includes('inactivo') ? 'inactivo' : 'activo',
+            });
+          });
+
+          if (validData.length === 0) {
+            setImportResult({
+              success: 0,
+              successList: [],
+              errors: ['No se encontraron datos validos para importar.', ...formatErrors.slice(0, 20)]
+            });
+            setIsImporting(false);
+            return;
+          }
+
+          setPendingImportRows(validData);
+          setImportResult({
+            success: validData.length,
+            successList: validData.slice(0, 20).map((item) =>
+              `${item.propietario} (${item.manzana_codigo || getManzanaLabelById(item.manzana_id || '')} - C ${item.numero_casa})`
+            ),
+            errors: formatErrors,
+          });
+          setIsImporting(false);
+          return;
+        }
 
         const requiredColumns = ['Manzana', 'Número Casa', 'Propietario'];
         const headers = Object.keys(jsonData[0] || {});
         
-        const missingColumns = requiredColumns.filter(col => !headers.includes(col));
+        const missingColumns = requiredColumns.filter((col) => !headers.some((header) => normalizeHeader(header) === normalizeHeader(col)));
         if (missingColumns.length > 0) {
           setImportResult({
             success: 0,
@@ -237,9 +456,9 @@ export default function ViviendasPage() {
         const formatErrors: string[] = [];
 
         jsonData.forEach((row, index) => {
-          const manzana = parseInt(row['Manzana']);
-          const numeroCasa = String(row['Número Casa'] || '').trim();
-          const propietario = String(row['Propietario'] || '').trim();
+          const manzana = parseInt(String(getCellValue(row, ['Manzana']) || '0'));
+          const numeroCasa = String(getCellValue(row, ['Número Casa', 'Numero Casa']) || '').trim();
+          const propietario = String(getCellValue(row, ['Propietario']) || '').trim();
 
           if (!manzana || isNaN(manzana)) {
             formatErrors.push(`Fila ${index + 2}: Manzana inválida`);
@@ -254,17 +473,19 @@ export default function ViviendasPage() {
             return;
           }
 
+          const alumbrado = String(getCellValue(row, ['Alumbrado']) || 'Sí').toLowerCase();
+          const seguridad = String(getCellValue(row, ['Seguridad']) || 'No').toLowerCase();
           validData.push({
             manzana_id: manzana,
             numero_casa: numeroCasa,
             propietario: propietario,
-            cedula: String(row['Cédula'] || '').trim() || undefined,
-            telefono: String(row['Teléfono'] || '').trim() || undefined,
-            whatsapp: String(row['WhatsApp'] || '').trim() || undefined,
-            email: String(row['Email'] || '').trim() || undefined,
-            direccion: String(row['Dirección'] || '').trim() || `Manzana ${manzana} - Casa ${numeroCasa}`,
-            tiene_alumbrado: String(row['Alumbrado'] || 'Sí').toLowerCase() === 'sí' || String(row['Alumbrado'] || 'Sí').toLowerCase() === 'si' || String(row['Alumbrado'] || 'Sí').toLowerCase() === 'yes' || String(row['Alumbrado'] || 'Sí').toLowerCase() === 'true' || String(row['Alumbrado'] || 'Sí').toLowerCase() === '1',
-            tiene_seguridad: String(row['Seguridad'] || 'No').toLowerCase() === 'sí' || String(row['Seguridad'] || 'No').toLowerCase() === 'si' || String(row['Seguridad'] || 'No').toLowerCase() === 'yes' || String(row['Seguridad'] || 'No').toLowerCase() === 'true' || String(row['Seguridad'] || 'No').toLowerCase() === '1',
+            cedula: String(getCellValue(row, ['Cédula', 'Cedula']) || '').trim() || undefined,
+            telefono: String(getCellValue(row, ['Teléfono', 'Telefono']) || '').trim() || undefined,
+            whatsapp: String(getCellValue(row, ['WhatsApp', 'Whatsapp']) || '').trim() || undefined,
+            email: String(getCellValue(row, ['Email']) || '').trim() || undefined,
+            direccion: String(getCellValue(row, ['Dirección', 'Direccion']) || '').trim() || `MZ ${manzana} - Casa ${numeroCasa}`,
+            tiene_alumbrado: alumbrado === 'sí' || alumbrado === 'si' || alumbrado === 'yes' || alumbrado === 'true' || alumbrado === '1',
+            tiene_seguridad: seguridad === 'sí' || seguridad === 'si' || seguridad === 'yes' || seguridad === 'true' || seguridad === '1',
             estado: 'activo',
           });
         });
@@ -289,7 +510,15 @@ export default function ViviendasPage() {
           return;
         }
 
-        importMutation.mutate(validData);
+        setPendingImportRows(validData as ImportVivienda[]);
+        setImportResult({
+          success: validData.length,
+          successList: (validData as ImportVivienda[]).slice(0, 20).map((item) =>
+            `${item.propietario} (${getManzanaLabelById(item.manzana_id || '')} - C ${item.numero_casa})`
+          ),
+          errors: formatErrors,
+        });
+        setIsImporting(false);
       } catch (error) {
         setImportResult({
           success: 0,
@@ -356,12 +585,14 @@ export default function ViviendasPage() {
   const openEditDialog = (vivienda: Vivienda) => {
     setEditingVivienda(vivienda);
     setErrorMessage('');
-    const numManzana = vivienda.manzana_id.toString();
+    const manzana = manzanasData?.find((m) => m.id === vivienda.manzana_id)
+      || manzanasData?.find((m) => normalizeHeader(m.codigo) === normalizeHeader(vivienda.manzana_codigo || `MZ ${vivienda.manzana_id}`));
+    const manzanaLabel = manzana?.codigo || `MZ ${vivienda.manzana_id}`;
     const numCasa = vivienda.numero_casa.padStart(2, '0');
-    const direccionAuto = `Manzana ${numManzana} - Casa ${numCasa}`;
+    const direccionAuto = `${manzanaLabel} - Casa ${numCasa}`;
     setFormData({
       numero_casa: numCasa,
-      manzana_id: numManzana,
+      manzana_id: String(manzana?.id || vivienda.manzana_id),
       propietario: vivienda.propietario,
       cedula: vivienda.cedula || '',
       telefono: vivienda.telefono || '',
@@ -401,7 +632,7 @@ export default function ViviendasPage() {
         v => v.manzana_id === numManzana && v.numero_casa === numCasa
       );
       if (viviendaExistente) {
-        setErrorMessage(`Ya existe la vivienda ${viviendaExistente.propietario} en MZ ${numManzana} - Casa ${numCasa}`);
+        setErrorMessage(`Ya existe la vivienda ${viviendaExistente.propietario} en ${getManzanaLabelById(numManzana)} - C ${numCasa}`);
         return;
       }
     }
@@ -430,9 +661,9 @@ export default function ViviendasPage() {
       return;
     }
     api.put(`/viviendas/${vivienda.id}`, { [service]: updates[service] }, currentToken)
-      .then(() => queryClient.invalidateQueries({ queryKey: ['viviendas'] }))
-      .catch((error: any) => {
-        setErrorMessage(error?.message || 'Error al actualizar');
+      .then(() => invalidateAllRelated())
+      .catch((error) => {
+        setErrorMessage(getErrorMessage(error, 'Error al actualizar'));
       });
   };
 
@@ -444,9 +675,9 @@ export default function ViviendasPage() {
       return;
     }
     api.put(`/viviendas/${vivienda.id}`, { estado: newEstado }, currentToken)
-      .then(() => queryClient.invalidateQueries({ queryKey: ['viviendas'] }))
-      .catch((error: any) => {
-        setErrorMessage(error?.message || 'Error al actualizar el estado');
+      .then(() => invalidateAllRelated())
+      .catch((error) => {
+        setErrorMessage(getErrorMessage(error, 'Error al actualizar el estado'));
       });
   };
 
@@ -466,7 +697,7 @@ export default function ViviendasPage() {
         (seguridadFilter === 'no' && !v.tiene_seguridad);
       
       return matchesSearch && matchesEstado && matchesAlumbrado && matchesSeguridad;
-    });
+    }).slice().sort(sortByCasa);
   }, [viviendas, searchTerm, estadoFilter, alumbradoFilter, seguridadFilter]);
 
   const isFilteredByManzana = manzanaFilter !== 'all';
@@ -513,15 +744,9 @@ export default function ViviendasPage() {
     return pages;
   };
 
-  const getManzanaCodigo = (manzanaId: number) => {
-    const manzana = manzanasData?.find(m => m.id === manzanaId);
-    const codigo = manzana?.codigo || 'MZ ' + manzanaId;
-    const numero = codigo.replace(/\D/g, '');
-    return `MZ ${numero}`;
-  };
-
-  const getCasaLabel = (manzanaId: number | string, numeroCasa: string) => {
-    return `MZ ${manzanaId}-${numeroCasa}`;
+  const getCasaLabel = (vivienda: Pick<Vivienda, 'manzana_id' | 'manzana_codigo' | 'numero_casa'>) => {
+    const manzana = vivienda.manzana_codigo || getManzanaLabelById(vivienda.manzana_id);
+    return `${manzana} - C ${vivienda.numero_casa.padStart(2, '0')}`;
   };
 
   if (isLoading) {
@@ -550,7 +775,7 @@ export default function ViviendasPage() {
           </Button>
           {canEdit && (
             <>
-              <Button variant="outline" onClick={() => { setShowImportDialog(true); setImportResult(null); }} className="bg-purple-500/10 border-purple-500/30 text-purple-400 hover:bg-purple-500/20 hover:text-purple-300">
+              <Button variant="outline" onClick={() => { setShowImportDialog(true); setImportResult(null); setPendingImportRows([]); }} className="bg-purple-500/10 border-purple-500/30 text-purple-400 hover:bg-purple-500/20 hover:text-purple-300">
                 <Upload className="h-4 w-4 mr-2" />
                 Importar
               </Button>
@@ -606,7 +831,9 @@ export default function ViviendasPage() {
             {isImporting && (
               <div className="flex items-center justify-center gap-2 py-4">
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-purple-400"></div>
-                <span className="text-sm text-white/70">Importando datos...</span>
+                <span className="text-sm text-white/70">
+                  {importMutation.isPending ? 'Guardando viviendas...' : 'Leyendo archivo...'}
+                </span>
               </div>
             )}
 
@@ -619,13 +846,17 @@ export default function ViviendasPage() {
                     <Check className="h-5 w-5 text-green-400" />
                   )}
                   <span className={`font-medium ${importResult.errors.length > 0 ? 'text-yellow-400' : 'text-green-400'}`}>
-                    {importResult.success} viviendas importadas exitosamente
+                    {pendingImportRows.length > 0
+                      ? `${pendingImportRows.length} viviendas listas para guardar`
+                      : `${importResult.success} viviendas importadas exitosamente`}
                   </span>
                 </div>
                 
                 {importResult.successList.length > 0 && (
                   <div className="mt-3">
-                    <p className="text-xs text-green-400 font-medium mb-1">Registros nuevos agregados:</p>
+                    <p className="text-xs text-green-400 font-medium mb-1">
+                      {pendingImportRows.length > 0 ? 'Registros detectados:' : 'Registros nuevos agregados:'}
+                    </p>
                     <ul className="text-xs text-white/70 space-y-0.5 max-h-32 overflow-y-auto bg-green-500/10 rounded p-2">
                       {importResult.successList.map((item, i) => (
                         <li key={i} className="flex items-center gap-1">
@@ -654,9 +885,29 @@ export default function ViviendasPage() {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowImportDialog(false)}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowImportDialog(false);
+                setPendingImportRows([]);
+                setImportResult(null);
+              }}
+              disabled={importMutation.isPending}
+            >
               Cerrar
             </Button>
+            {pendingImportRows.length > 0 && (
+              <Button
+                onClick={() => {
+                  setIsImporting(true);
+                  importMutation.mutate(pendingImportRows);
+                }}
+                disabled={importMutation.isPending}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                {importMutation.isPending ? 'Guardando...' : `Guardar importación (${pendingImportRows.length})`}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -686,8 +937,8 @@ export default function ViviendasPage() {
                   <SelectContent>
                     <SelectItem value="all">Todas</SelectItem>
                     {manzanasData?.map((m: Manzana) => (
-                      <SelectItem key={m.id} value={m.codigo.replace(/\D/g, '')}>
-                        {`MZ ${m.codigo.replace(/\D/g, '')}`}
+                      <SelectItem key={m.id} value={String(m.id)}>
+                        {m.codigo}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -737,6 +988,16 @@ export default function ViviendasPage() {
         </CardContent>
       </Card>
 
+      {viviendasError && (
+        <Card className="border-red-500/30 bg-red-500/10">
+          <CardContent className="pt-4">
+            <p className="text-sm text-red-300">
+              No se pudieron cargar las viviendas. {viviendasError instanceof Error ? viviendasError.message : 'Intenta iniciar sesion nuevamente.'}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Table */}
       <Card className="overflow-hidden">
         <Table>
@@ -763,7 +1024,7 @@ export default function ViviendasPage() {
                       <HomeIcon className="h-4 w-4 text-green-400" />
                     </div>
                     <div>
-                      <p className="font-semibold text-white">{getCasaLabel(vivienda.manzana_id, vivienda.numero_casa)}</p>
+                      <p className="font-semibold text-white">{getCasaLabel(vivienda)}</p>
                       <p className="text-xs text-white/50 md:hidden">{vivienda.propietario}</p>
                     </div>
                   </div>
@@ -841,7 +1102,7 @@ export default function ViviendasPage() {
                           setDeleteConfirmData({
                             id: vivienda.id,
                             nombre: vivienda.propietario,
-                            casa: getCasaLabel(vivienda.manzana_id, vivienda.numero_casa)
+                            casa: getCasaLabel(vivienda)
                           });
                         }}
                       >
@@ -865,7 +1126,7 @@ export default function ViviendasPage() {
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-4 py-3 border-t border-white/10">
             <p className="text-sm text-white/60">
               {isFilteredByManzana 
-                ? `Mostrando ${filteredViviendas.length} viviendas de MZ ${manzanaFilter}`
+                ? `Mostrando ${filteredViviendas.length} viviendas de ${getManzanaLabelById(manzanaFilter)}`
                 : `Mostrando ${(currentPage - 1) * ITEMS_PER_PAGE + 1} - ${Math.min(currentPage * ITEMS_PER_PAGE, filteredViviendas.length)} de ${filteredViviendas.length} viviendas`
               }
             </p>
@@ -936,7 +1197,16 @@ export default function ViviendasPage() {
       </Card>
 
       {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteConfirmId !== null} onOpenChange={() => setDeleteConfirmId(null)}>
+      <Dialog
+        open={deleteConfirmId !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleteMutation.isPending) {
+            setDeleteConfirmId(null);
+            setDeleteConfirmData(null);
+            setErrorMessage('');
+          }
+        }}
+      >
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3">
@@ -962,11 +1232,21 @@ export default function ViviendasPage() {
                 </div>
               </div>
             )}
+            {errorMessage && (
+              <div className="mt-4 bg-red-500/20 border border-red-500/30 text-red-300 px-4 py-3 rounded-lg text-sm">
+                {errorMessage}
+              </div>
+            )}
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button 
               variant="outline" 
-              onClick={() => setDeleteConfirmId(null)}
+              onClick={() => {
+                setDeleteConfirmId(null);
+                setDeleteConfirmData(null);
+                setErrorMessage('');
+              }}
+              disabled={deleteMutation.isPending}
               className="flex-1"
             >
               Cancelar
@@ -976,13 +1256,12 @@ export default function ViviendasPage() {
               onClick={() => {
                 if (deleteConfirmId) {
                   deleteMutation.mutate(deleteConfirmId);
-                  setDeleteConfirmId(null);
-                  setDeleteConfirmData(null);
                 }
               }}
+              disabled={deleteMutation.isPending}
               className="flex-1 bg-red-500 hover:bg-red-600 text-white"
             >
-              Eliminar
+              {deleteMutation.isPending ? 'Eliminando...' : 'Eliminar'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1010,10 +1289,11 @@ export default function ViviendasPage() {
                   <Select 
                     value={formData.manzana_id} 
                     onValueChange={(value) => {
+                      const selected = manzanasData?.find((m) => String(m.id) === value);
                       setFormData({ 
                         ...formData, 
                         manzana_id: value,
-                        direccion: `Manzana ${value} - Casa ${formData.numero_casa.padStart(2, '0')}`
+                        direccion: `${selected?.codigo || `MZ ${value}`} - Casa ${formData.numero_casa.padStart(2, '0')}`
                       })
                     }}
                   >
@@ -1022,8 +1302,8 @@ export default function ViviendasPage() {
                     </SelectTrigger>
                     <SelectContent>
                       {manzanasData?.map((m: Manzana) => (
-                        <SelectItem key={m.id} value={m.codigo.replace(/\D/g, '')}>
-                          {`MZ ${m.codigo.replace(/\D/g, '')}`}
+                        <SelectItem key={m.id} value={String(m.id)}>
+                          {m.codigo}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1035,10 +1315,11 @@ export default function ViviendasPage() {
                     value={formData.numero_casa}
                     onChange={(e) => {
                       const casa = e.target.value.replace(/\D/g, '').slice(0, 2);
+                      const selected = manzanasData?.find((m) => String(m.id) === formData.manzana_id);
                       setFormData({ 
                         ...formData, 
                         numero_casa: casa,
-                        direccion: `Manzana ${formData.manzana_id || 'X'} - Casa ${casa.padStart(2, '0')}`
+                        direccion: `${selected?.codigo || 'MZ X'} - Casa ${casa.padStart(2, '0')}`
                       })
                     }}
                     placeholder="01"

@@ -1,17 +1,18 @@
 import { useState } from 'react';
 import { useAuthStore } from '@/store/auth';
-import { api } from '@/lib/api';
+import { api, apiUrl } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { formatCurrency, formatNumber, getCurrentPeriod, getMonthName } from '@/lib/utils';
-import { FileText, Download, Mail, MessageCircle, Printer, Plus, CheckCircle, Clock, AlertCircle, Search, Eye, Receipt, Zap, Home } from 'lucide-react';
-import { Factura, Vivienda } from '@/types';
+import { formatCurrency, formatKwh, formatReading, getCurrentPeriod, getMonthName } from '@/lib/utils';
+import { FileText, Mail, MessageCircle, Printer, Plus, CheckCircle, Clock, AlertCircle, Search, Eye, Receipt, Zap, Home, ShieldCheck } from 'lucide-react';
+import { Factura, Manzana, Vivienda } from '@/types';
+import { toast } from 'sonner';
 
 const meses = [
   { value: '1', label: 'Enero' },
@@ -37,13 +38,16 @@ export default function FacturasPage() {
   
   const [selectedAno, setSelectedAno] = useState(currentPeriod.ano.toString());
   const [selectedMes, setSelectedMes] = useState(currentPeriod.mes.toString());
-  const [viviendaFilter, setViviendaFilter] = useState<string>('all');
+  const viviendaFilter = 'all';
   const [estadoFilter, setEstadoFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [generating, setGenerating] = useState(false);
+  const [showGenerateDialog, setShowGenerateDialog] = useState(false);
   
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<Factura | null>(null);
   const [showFacturaModal, setShowFacturaModal] = useState(false);
+  const [showPazSalvoDialog, setShowPazSalvoDialog] = useState(false);
+  const [pazSalvoSearch, setPazSalvoSearch] = useState('');
 
   const ano = parseInt(selectedAno);
   const mes = parseInt(selectedMes);
@@ -64,9 +68,9 @@ export default function FacturasPage() {
     enabled: !!token,
   });
 
-  const { data: manzanas } = useQuery<any[]>({
+  const { data: manzanas } = useQuery<Manzana[]>({
     queryKey: ['manzana'],
-    queryFn: () => api.get<any[]>('/manzanas', token || undefined),
+    queryFn: () => api.get<Manzana[]>('/manzanas', token || undefined),
     enabled: !!token,
   });
 
@@ -78,13 +82,13 @@ export default function FacturasPage() {
   });
 
   const handleGenerarMasivo = async () => {
-    if (!confirm('¿Generar facturas para todas las viviendas con lecturas?')) return;
+    setShowGenerateDialog(false);
     setGenerating(true);
     try {
       await generarMasivoMutation.mutateAsync();
-      alert('Facturas generadas correctamente');
-    } catch (error: any) {
-      alert('Error al generar facturas: ' + (error?.message || 'Error desconocido'));
+      toast.success('Facturas generadas correctamente');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Error desconocido al generar facturas');
     }
     setGenerating(false);
   };
@@ -96,7 +100,7 @@ export default function FacturasPage() {
       const vivienda = viviendas?.find(v => v.id === f.vivienda_id);
       const searchLower = searchTerm.toLowerCase();
       const matchesPropietario = vivienda?.propietario.toLowerCase().includes(searchLower);
-      const matchesCedula = vivienda?.cedula.toLowerCase().includes(searchLower);
+      const matchesCedula = vivienda?.cedula?.toLowerCase().includes(searchLower);
       const matchesCasa = vivienda?.numero_casa.toLowerCase().includes(searchLower);
       const matchesFactura = f.numero_factura?.toLowerCase().includes(searchLower);
       if (!matchesPropietario && !matchesCedula && !matchesCasa && !matchesFactura) return false;
@@ -120,6 +124,10 @@ export default function FacturasPage() {
         return <span className="flex items-center gap-1 text-green-600"><Clock className="h-4 w-4" /> Parcial</span>;
       case 'vencida':
         return <span className="flex items-center gap-1 text-red-600"><AlertCircle className="h-4 w-4" /> Vencida</span>;
+      case 'anulada':
+        return <span className="flex items-center gap-1 text-gray-600"><AlertCircle className="h-4 w-4" /> Anulada</span>;
+      case 'corregida':
+        return <span className="flex items-center gap-1 text-blue-600"><Clock className="h-4 w-4" /> Corregida</span>;
       default:
         return <span className="flex items-center gap-1 text-yellow-600"><Clock className="h-4 w-4" /> Pendiente</span>;
     }
@@ -128,7 +136,7 @@ export default function FacturasPage() {
   const getWhatsAppLink = (vivienda: Vivienda, factura: Factura) => {
     if (!vivienda.whatsapp) return '#';
     const tel = vivienda.whatsapp.replace('+', '');
-    const mensaje = `Hola ${vivienda.propietario}, tu factura de ${getMonthName(mes)} ${ano} es: ${formatCurrency(factura.total)}. Gracias por su pago.`;
+    const mensaje = `Hola ${vivienda.propietario}, tu factura de ${getMonthName(mes)} ${ano} es: ${formatCurrency(factura.total || 0)}. Gracias por su pago.`;
     return `https://wa.me/${tel}?text=${encodeURIComponent(mensaje)}`;
   };
 
@@ -140,6 +148,44 @@ export default function FacturasPage() {
   const imprimirFactura = () => {
     window.print();
   };
+
+  const descargarPazSalvo = async (vivienda: Vivienda) => {
+    if (!token) return;
+    try {
+      const response = await fetch(apiUrl(`/api/v1/viviendas/${vivienda.id}/paz-y-salvo`), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        toast.error('No se pudo generar el paz y salvo.');
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const cedula = (vivienda.cedula || 'sincedula').replace(/\s+/g, '');
+      a.href = url;
+      a.download = `paz-y-salvo-${cedula}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`Paz y salvo generado para ${vivienda.propietario}`);
+    } catch {
+      toast.error('Error al generar el paz y salvo.');
+    }
+  };
+
+  const pazSalvoMatches = (() => {
+    const term = pazSalvoSearch.trim().toLowerCase();
+    if (!term || !viviendas) return [];
+    return viviendas
+      .filter((v) =>
+        (v.cedula || '').toLowerCase().includes(term) ||
+        (v.propietario || '').toLowerCase().includes(term) ||
+        String(v.numero_casa || '').toLowerCase().includes(term)
+      )
+      .slice(0, 8);
+  })();
 
   const totalFacturado = filteredFacturas?.reduce((sum, f) => sum + (f.total || 0), 0) || 0;
   const totalPagado = filteredFacturas?.reduce((sum, f) => sum + (f.total_pagado || 0), 0) || 0;
@@ -157,12 +203,18 @@ export default function FacturasPage() {
             {getMonthName(mes)} {ano}
           </p>
         </div>
-        {(usuario?.rol === 'super_admin' || usuario?.rol === 'editor') && (
-          <Button onClick={handleGenerarMasivo} disabled={generating}>
-            <Plus className="h-4 w-4 mr-2" />
-            {generating ? 'Generando...' : 'Generar Facturas'}
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => { setShowPazSalvoDialog(true); setPazSalvoSearch(''); }} className="bg-emerald-500/10 border-emerald-500/30 text-emerald-700 hover:bg-emerald-500/20">
+            <ShieldCheck className="h-4 w-4 mr-2" />
+            Paz y Salvo
           </Button>
-        )}
+          {(usuario?.rol === 'super_admin' || usuario?.rol === 'editor') && (
+            <Button onClick={() => setShowGenerateDialog(true)} disabled={generating}>
+              <Plus className="h-4 w-4 mr-2" />
+              {generating ? 'Generando...' : 'Generar Facturas'}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Selector de Período */}
@@ -217,6 +269,9 @@ export default function FacturasPage() {
                   <SelectItem value="pendiente">Pendiente</SelectItem>
                   <SelectItem value="pagada">Pagada</SelectItem>
                   <SelectItem value="parcial">Parcial</SelectItem>
+                  <SelectItem value="vencida">Vencida</SelectItem>
+                  <SelectItem value="anulada">Anulada</SelectItem>
+                  <SelectItem value="corregida">Corregida</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -319,7 +374,7 @@ export default function FacturasPage() {
                     <TableCell className="text-right">
                       <span className="flex items-center justify-end gap-1">
                         <Zap className="h-3 w-3 text-yellow-500" />
-                        {formatNumber(factura.consumo || 0)} kWh
+                        {formatKwh(factura.consumo || 0)} kWh
                       </span>
                     </TableCell>
                     <TableCell className="text-right font-medium">{formatCurrency(factura.total || 0)}</TableCell>
@@ -413,9 +468,9 @@ export default function FacturasPage() {
                           <td className="text-right p-2">{formatCurrency((facturaSeleccionada.costo_subsidiado || 0) + (facturaSeleccionada.costo_excedente || 0))}</td>
                         </tr>
                         <tr className="border-t">
-                          <td className="p-2">  kWh consumidos: {formatNumber(facturaSeleccionada.consumo || 0)}</td>
+                          <td className="p-2">  kWh consumidos: {formatKwh(facturaSeleccionada.consumo || 0)}</td>
                           <td className="text-right p-2 text-muted-foreground">
-                            ({formatNumber(facturaSeleccionada.kwh_subsidiados || 0)} kWh subsidiados + {formatNumber(facturaSeleccionada.kwh_excedente || 0)} kWh excedente)
+                            ({formatKwh(facturaSeleccionada.kwh_subsidiados || 0)} kWh subsidiados + {formatKwh(facturaSeleccionada.kwh_excedente || 0)} kWh excedente)
                           </td>
                         </tr>
                         {facturaSeleccionada.cargo_alumbrado > 0 && (
@@ -438,7 +493,7 @@ export default function FacturasPage() {
                         )}
                         <tr className="border-t font-bold bg-muted">
                           <td className="p-2">TOTAL A PAGAR</td>
-                          <td className="text-right p-2">{formatCurrency(facturaSeleccionada.total)}</td>
+                          <td className="text-right p-2">{formatCurrency(facturaSeleccionada.total || 0)}</td>
                         </tr>
                       </tbody>
                     </table>
@@ -448,7 +503,7 @@ export default function FacturasPage() {
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div className="bg-muted p-3 rounded">
                       <p><span className="font-medium">Saldo Anterior:</span> {formatCurrency(facturaSeleccionada.saldo_anterior || 0)}</p>
-                      <p><span className="font-medium">Total Facturado:</span> {formatCurrency(facturaSeleccionada.total)}</p>
+                      <p><span className="font-medium">Total Facturado:</span> {formatCurrency(facturaSeleccionada.total || 0)}</p>
                       <p className="font-bold"><span>Pagado:</span> {formatCurrency(facturaSeleccionada.total_pagado || 0)}</p>
                       <p className="font-bold text-green-600"><span>Saldo Pendiente:</span> {formatCurrency(saldoPendiente)}</p>
                     </div>
@@ -461,7 +516,7 @@ export default function FacturasPage() {
 
                   {/* Lecturas */}
                   <div className="text-sm text-muted-foreground text-center">
-                    <p>Lectura Anterior: {formatNumber(facturaSeleccionada.lectura_anterior || 0)} | Lectura Actual: {formatNumber(facturaSeleccionada.lectura_actual || 0)} | Consumo: {formatNumber(facturaSeleccionada.consumo || 0)} kWh</p>
+                    <p>Lectura Anterior: {formatReading(facturaSeleccionada.lectura_anterior || 0)} | Lectura Actual: {formatReading(facturaSeleccionada.lectura_actual || 0)} | Consumo: {formatKwh(facturaSeleccionada.consumo || 0)} kWh</p>
                   </div>
                 </div>
 
@@ -477,6 +532,75 @@ export default function FacturasPage() {
               </>
             );
           })()}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showGenerateDialog} onOpenChange={setShowGenerateDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Generar facturas</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Se generarán facturas para todas las viviendas con lecturas del período seleccionado.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowGenerateDialog(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleGenerarMasivo} disabled={generating}>
+              {generating ? 'Generando...' : 'Confirmar generación'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showPazSalvoDialog} onOpenChange={setShowPazSalvoDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-emerald-600" />
+              Generar Paz y Salvo
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Busca por cédula, nombre o número de casa y descarga el PDF. Se genera sin validar el estado de cuenta (lleva sello "PAGADO" como marca de agua).
+            </p>
+            <Input
+              autoFocus
+              placeholder="Cédula, propietario o casa..."
+              value={pazSalvoSearch}
+              onChange={(e) => setPazSalvoSearch(e.target.value)}
+            />
+            <div className="max-h-72 overflow-auto rounded-md border divide-y">
+              {pazSalvoSearch.trim() === '' ? (
+                <div className="p-3 text-sm text-muted-foreground">Empieza a escribir para buscar.</div>
+              ) : pazSalvoMatches.length === 0 ? (
+                <div className="p-3 text-sm text-muted-foreground">Sin resultados.</div>
+              ) : (
+                pazSalvoMatches.map((v) => {
+                  const m = manzanas?.find((x) => x.id === v.manzana_id);
+                  return (
+                    <div key={v.id} className="flex items-center justify-between p-3 gap-3">
+                      <div className="text-sm">
+                        <div className="font-medium">{v.propietario}</div>
+                        <div className="text-xs text-muted-foreground">
+                          Cédula {v.cedula || '—'} · {m ? `MZ ${m.codigo}` : `MZ ${v.manzana_id}`} Casa {v.numero_casa}
+                        </div>
+                      </div>
+                      <Button size="sm" onClick={() => descargarPazSalvo(v)} className="bg-emerald-600 hover:bg-emerald-700">
+                        <ShieldCheck className="h-4 w-4 mr-1" />
+                        Descargar
+                      </Button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPazSalvoDialog(false)}>Cerrar</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -7,12 +7,15 @@ class RoleEnum(str, Enum):
     SUPER_ADMIN = "super_admin"
     EDITOR = "editor"
     LECTOR = "lector"
+    CLIENTE = "cliente"
 
 class EstadoFacturaEnum(str, Enum):
     PENDIENTE = "pendiente"
     PAGADA = "pagada"
     PARCIAL = "parcial"
     VENCIDA = "vencida"
+    ANULADA = "anulada"
+    CORREGIDA = "corregida"
 
 class UsuarioCreate(BaseModel):
     email: EmailStr
@@ -106,6 +109,7 @@ class ViviendaResponse(BaseModel):
     id: int
     numero_casa: str
     manzana_id: int
+    manzana_codigo: Optional[str] = None
     propietario: str
     cedula: Optional[str]
     telefono: Optional[str]
@@ -169,9 +173,11 @@ class LecturaCreate(BaseModel):
     vivienda_id: int
     ano: int = Field(..., ge=2020, le=2100)
     mes: int = Field(..., ge=1, le=12)
-    lectura_actual: int = Field(..., ge=0)
+    lectura_anterior: Optional[float] = Field(default=None, ge=0)
+    lectura_actual: Optional[float] = Field(default=None, ge=0)
     sincronizado: bool = True
     offline_id: Optional[str] = None
+    estado: Optional[str] = "borrador"
 
 class LecturaResponse(BaseModel):
     id: int
@@ -179,9 +185,10 @@ class LecturaResponse(BaseModel):
     usuario_id: int
     ano: int
     mes: int
-    lectura_anterior: Optional[int]
-    lectura_actual: int
-    consumo: Optional[int]
+    lectura_anterior: Optional[float]
+    lectura_actual: Optional[float]
+    consumo: Optional[float]
+    estado: Optional[str] = "borrador"
     sincronizado: bool
     offline_id: Optional[str]
     created_at: datetime
@@ -193,15 +200,15 @@ class FacturaCreate(BaseModel):
     vivienda_id: int
     ano: int
     mes: int
-    lectura_anterior: Optional[int] = None
-    lectura_actual: Optional[int] = None
+    lectura_anterior: Optional[float] = None
+    lectura_actual: Optional[float] = None
     observaciones: Optional[str] = None
     es_manual: bool = False
 
 class FacturaUpdate(BaseModel):
-    lectura_anterior: Optional[int] = None
-    lectura_actual: Optional[int] = None
-    consumo: Optional[int] = None
+    lectura_anterior: Optional[float] = None
+    lectura_actual: Optional[float] = None
+    consumo: Optional[float] = None
     cargo_alumbrado: Optional[float] = None
     cargo_seguridad: Optional[float] = None
     cargo_toma_lectura: Optional[float] = None
@@ -217,11 +224,11 @@ class FacturaResponse(BaseModel):
     usuario_creador_id: Optional[int]
     ano: int
     mes: int
-    lectura_anterior: Optional[int]
-    lectura_actual: Optional[int]
-    consumo: Optional[int]
-    kwh_subsidiados: Optional[int]
-    kwh_excedente: Optional[int]
+    lectura_anterior: Optional[float]
+    lectura_actual: Optional[float]
+    consumo: Optional[float]
+    kwh_subsidiados: Optional[float]
+    kwh_excedente: Optional[float]
     costo_subsidiado: Optional[float]
     costo_excedente: Optional[float]
     subtotal_energia: Optional[float]
@@ -251,6 +258,7 @@ class PagoCreate(BaseModel):
     metodo_pago: Optional[str] = None
     fecha_pago: datetime
     referencia: Optional[str] = None
+    tipo_pago: Optional[str] = "abono"
 
 class PagoImportData(BaseModel):
     cuenta: str
@@ -266,15 +274,52 @@ class PagoImportResponse(BaseModel):
     success_list: List[str]
     errors: List[str]
 
+class HistoricoImportRow(BaseModel):
+    cedula: str
+    ano: int
+    mes_consumo: int
+    lectura_anterior: Optional[float] = None
+    lectura_actual: float
+    precio_kwh_subsidiado: float
+    precio_kwh_no_subsidiado: float
+    limite_subsidio: Optional[int] = 184
+    cargo_toma_lectura: Optional[float] = 0
+    cargo_alumbrado: Optional[float] = 0
+    cargo_seguridad: Optional[float] = 0
+    cargo_administracion: Optional[float] = 0
+    valor_pagado: Optional[float] = 0
+    fecha_pago: Optional[datetime] = None
+    valor_cobrado_hoja: Optional[float] = None
+
+class HistoricoImportDiferencia(BaseModel):
+    cedula: str
+    ano: int
+    mes: int
+    valor_hoja: float
+    valor_calculado: float
+    delta: float
+
+class HistoricoImportResponse(BaseModel):
+    procesados: int
+    facturas_creadas: List[str]
+    tarifas_creadas: List[str]
+    advertencias_tarifa_existente: List[str]
+    diferencias_valor: List[HistoricoImportDiferencia]
+    errores: List[str]
+
 class PagoResponse(BaseModel):
     id: int
     factura_id: Optional[int]
+    vivienda_id: Optional[int] = None
     usuario_registra_id: Optional[int]
     monto: float
     concepto: Optional[str]
     metodo_pago: Optional[str]
     fecha_pago: datetime
     referencia: Optional[str]
+    tipo_pago: Optional[str] = None
+    periodo_ano: Optional[int] = None
+    periodo_mes: Optional[int] = None
     created_at: datetime
     
     class Config:
@@ -288,12 +333,17 @@ class PagoDetalleResponse(BaseModel):
     metodo_pago: Optional[str]
     fecha_pago: datetime
     referencia: Optional[str]
+    tipo_pago: Optional[str] = None
+    periodo_ano: Optional[int] = None
+    periodo_mes: Optional[int] = None
     created_at: datetime
     vivienda_id: Optional[int] = None
     numero_casa: Optional[str] = None
     propietario: Optional[str] = None
     cedula: Optional[str] = None
     manzana_id: Optional[int] = None
+    manzana_codigo: Optional[str] = None
+    numero_factura: Optional[str] = None
     ano: Optional[int] = None
     mes: Optional[int] = None
     total_factura: Optional[float] = None
@@ -309,7 +359,7 @@ class DashboardResponse(BaseModel):
     facturas_pagadas: int
     total_recaudo: float
     total_pendiente: float
-    consumo_total_kwh: int
+    consumo_total_kwh: float
     promedio_consumo_kwh: float
 
 class ReporteCarteraResponse(BaseModel):
@@ -355,9 +405,113 @@ class HistorialPeriodoResponse(BaseModel):
     valor: Optional[str]
     descripcion: Optional[str]
     fecha_inicio: Optional[datetime]
-    fecha_fin: Optional[bool]
+    fecha_fin: Optional[datetime]
     activa: bool
     
+    class Config:
+        from_attributes = True
+
+class LecturaPlanillaRow(BaseModel):
+    vivienda_id: int
+    numero_casa: str
+    manzana_id: int
+    manzana_codigo: Optional[str] = None
+    propietario: str
+    cedula: Optional[str] = None
+    telefono: Optional[str] = None
+    estado_vivienda: str
+    lectura_id: Optional[int] = None
+    lectura_anterior: float
+    lectura_actual: Optional[float] = None
+    consumo_kwh: float = 0
+    consumo_subsidiado: float = 0
+    consumo_sin_subsidio: float = 0
+    precio_subsidiado: float = 0
+    precio_sin_subsidio: float = 0
+    cargo_toma_lectura: float = 0
+    cargo_alumbrado: float = 0
+    cargo_seguridad: float = 0
+    cargo_administracion: float = 0
+    cobros_fijos: float = 0
+    limite_subsidio: int = 184
+    tarifa_subsidiada: float = 0
+    tarifa_plena: float = 0
+    total_factura: float = 0
+    factura_id: Optional[int] = None
+    factura_estado: Optional[EstadoFacturaEnum] = None
+    lectura_estado: Optional[str] = "borrador"
+    requiere_lectura: bool = True
+
+class ClienteFacturaResponse(BaseModel):
+    id: int
+    vivienda_id: int
+    casa: str
+    propietario: str
+    cedula: Optional[str] = None
+    ano: int
+    mes: int
+    ano_cobro: int
+    mes_cobro: int
+    numero_factura: str
+    lectura_anterior: Optional[float] = None
+    lectura_actual: Optional[float] = None
+    consumo: Optional[float] = None
+    total: float = 0
+    total_pagado: float = 0
+    saldo: float = 0
+    estado: str
+    fecha_emision: datetime
+
+class ClienteResumenResponse(BaseModel):
+    propietario: str
+    cedula: str
+    total_facturado: float
+    total_pagado: float
+    total_adeudado: float
+    facturas_pendientes: int
+    facturas_pagadas: int
+    facturas_parciales: int
+    al_dia: bool
+    facturas: List[ClienteFacturaResponse]
+
+class ClientePerfilResponse(BaseModel):
+    nombre_completo: str
+    cedula: str
+    casa: Optional[str] = None
+    telefono: Optional[str] = None
+    whatsapp: Optional[str] = None
+    email: Optional[str] = None
+
+class FacturacionMensualResponse(BaseModel):
+    id: int
+    factura_id: int
+    vivienda_id: int
+    ano_cobro: int
+    mes_cobro: int
+    ano_consumo: int
+    mes_consumo: int
+    casa: str
+    nombre: str
+    cedula: Optional[str] = None
+    lectura_anterior: float
+    lectura_actual: float
+    consumo_kwh: float
+    consumo_subsidio: float
+    consumo_sin_subsidio: float
+    valor_subsidio: float
+    valor_sin_subsidio: float
+    toma_lectura: float
+    alumbrado: float
+    seguridad: float
+    administracion: float
+    subtotal: float
+    descuento_porcentaje: float
+    valor_descuento: float
+    total_a_pagar: float
+    pago: float
+    saldo: float
+    estado: str
+
     class Config:
         from_attributes = True
 

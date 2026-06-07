@@ -1,4 +1,22 @@
-const API_BASE_URL = '/api/v1';
+// En desarrollo se usa el proxy de vite (/api/v1 → backend local).
+// En producción se debe configurar VITE_API_BASE_URL apuntando al backend desplegado.
+const API_BASE_URL = (() => {
+  const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+  if (envBase) return envBase.replace(/\/$/, '') + '/api/v1';
+  return '/api/v1';
+})();
+
+/**
+ * Construye una URL absoluta hacia el backend.
+ * Acepta paths que empiezan con `/api/v1/...` o `/...` (relativo a `/api/v1`).
+ */
+export function apiUrl(path: string): string {
+  if (!path.startsWith('/')) path = '/' + path;
+  if (path.startsWith('/api/v1')) {
+    return API_BASE_URL + path.replace(/^\/api\/v1/, '');
+  }
+  return API_BASE_URL + path;
+}
 
 interface FetchOptions extends RequestInit {
   token?: string;
@@ -40,7 +58,19 @@ class ApiClient {
       } catch {
         // No JSON response
       }
-      const error: any = new Error(errorMessage);
+      if (response.status === 401 && typeof window !== 'undefined') {
+        try {
+          localStorage.removeItem('auth-storage');
+        } catch {
+          // ignore localStorage access issues
+        }
+        const currentPath = window.location.pathname || '';
+        if (!currentPath.startsWith('/login')) {
+          window.location.href = '/login';
+        }
+        errorMessage = 'Sesion expirada o invalida. Inicia sesion de nuevo.';
+      }
+      const error = new Error(errorMessage) as Error & { response?: { data: { detail: string } } };
       error.response = { data: { detail: errorMessage } };
       throw error;
     }

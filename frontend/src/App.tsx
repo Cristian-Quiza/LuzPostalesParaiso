@@ -1,6 +1,7 @@
 import { useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Toaster } from 'sonner';
 import { useAuthStore } from '@/store/auth';
 import { Layout } from '@/components/layout';
 import LoginPage from '@/pages/login';
@@ -13,7 +14,10 @@ import EstadoCuentaPage from '@/pages/estado-cuenta';
 import PerfilPage from '@/pages/perfil';
 import ConfiguracionPage from '@/pages/configuracion';
 import RegistroPagosPage from '@/pages/registro-pagos';
-import ControlPagosPage from '@/pages/control-pagos';
+import FacturacionPage from '@/pages/control-pagos';
+import ControlCobrosPagosPage from '@/pages/control-cobros-pagos';
+import ClientePortalPage from '@/pages/cliente-portal';
+import UsuariosPage from '@/pages/usuarios';
 import { api } from '@/lib/api';
 import { getLecturasOffline, deleteLecturaOffline, getSyncQueue, clearSyncQueueItem } from '@/lib/indexeddb';
 import '@/index.css';
@@ -89,27 +93,51 @@ function SyncProvider({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuthStore();
+function ProtectedRoute({ children, clienteOnly = false }: { children: React.ReactNode; clienteOnly?: boolean }) {
+  const { isAuthenticated, usuario } = useAuthStore();
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+  if (clienteOnly && usuario?.rol !== 'cliente') {
+    return <Navigate to="/dashboard" replace />;
+  }
+  if (!clienteOnly && usuario?.rol === 'cliente') {
+    return <Navigate to="/cliente" replace />;
   }
   return <>{children}</>;
 }
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, usuario } = useAuthStore();
   if (isAuthenticated) {
+    if (usuario?.rol === 'cliente') {
+      return <Navigate to="/cliente" replace />;
+    }
     return <Navigate to="/dashboard" replace />;
   }
   return <>{children}</>;
 }
 
 function AppRoutes() {
+  useEffect(() => {
+    const releaseStalePointerLock = () => {
+      const hasOpenDialog = !!document.querySelector('[role="dialog"]');
+      if (!hasOpenDialog && document.body.style.pointerEvents === 'none') {
+        document.body.style.pointerEvents = '';
+      }
+    };
+
+    releaseStalePointerLock();
+    const intervalId = window.setInterval(releaseStalePointerLock, 500);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   return (
     <SyncProvider>
       <Routes>
         <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
+        <Route path="/cliente" element={<ProtectedRoute clienteOnly><ClientePortalPage /></ProtectedRoute>} />
         <Route path="/" element={<ProtectedRoute><Layout><Navigate to="/dashboard" replace /></Layout></ProtectedRoute>} />
         <Route path="/dashboard" element={<ProtectedRoute><Layout><DashboardPage /></Layout></ProtectedRoute>} />
         <Route path="/viviendas" element={<ProtectedRoute><Layout><ViviendasPage /></Layout></ProtectedRoute>} />
@@ -120,7 +148,9 @@ function AppRoutes() {
         <Route path="/perfil" element={<ProtectedRoute><Layout><PerfilPage /></Layout></ProtectedRoute>} />
         <Route path="/configuracion" element={<ProtectedRoute><Layout><ConfiguracionPage /></Layout></ProtectedRoute>} />
         <Route path="/registro-pagos" element={<ProtectedRoute><Layout><RegistroPagosPage /></Layout></ProtectedRoute>} />
-        <Route path="/control-pagos" element={<ProtectedRoute><Layout><ControlPagosPage /></Layout></ProtectedRoute>} />
+        <Route path="/facturacion" element={<ProtectedRoute><Layout><FacturacionPage /></Layout></ProtectedRoute>} />
+        <Route path="/control-pagos" element={<ProtectedRoute><Layout><ControlCobrosPagosPage /></Layout></ProtectedRoute>} />
+        <Route path="/usuarios" element={<ProtectedRoute><Layout><UsuariosPage /></Layout></ProtectedRoute>} />
       </Routes>
     </SyncProvider>
   );
@@ -131,6 +161,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AppRoutes />
+        <Toaster richColors position="top-right" />
       </BrowserRouter>
     </QueryClientProvider>
   );

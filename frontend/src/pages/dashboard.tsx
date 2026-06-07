@@ -3,9 +3,9 @@ import { api } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useQuery } from '@tanstack/react-query';
-import { formatCurrency, formatNumber, getCurrentPeriod, getMonthName } from '@/lib/utils';
-import { 
-  Home, Users, FileText, Zap, DollarSign, TrendingUp, 
+import { formatCurrency, formatKwh, getCurrentPeriod, getMonthName } from '@/lib/utils';
+import {
+  Home, FileText, Zap, DollarSign, TrendingUp,
   Clock, CheckCircle, AlertCircle, ArrowRight, Sun, ClipboardList
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -26,9 +26,9 @@ export default function DashboardPage() {
   const { token, usuario } = useAuthStore();
   const { ano, mes } = getCurrentPeriod();
 
-  const { data: stats, isLoading } = useQuery<DashboardStats>({
+  const { data: stats } = useQuery<DashboardStats>({
     queryKey: ['dashboard-stats'],
-    queryFn: () => api.get<DashboardStats>('/reportes/dashboard', token || undefined),
+    queryFn: () => api.get<DashboardStats>('/dashboard', token || undefined),
     enabled: !!token,
   });
 
@@ -37,7 +37,7 @@ export default function DashboardPage() {
     : 0;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 rounded-2xl bg-slate-900/55 p-4 text-slate-100 md:p-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
@@ -60,7 +60,7 @@ export default function DashboardPage() {
               </div>
               <div className="text-right">
                 <p className="text-3xl font-bold text-white">{stats?.viviendas_activas || 0}</p>
-                <p className="text-sm text-white/50">Viviendas Activas</p>
+                <p className="text-sm text-slate-300">Viviendas Activas</p>
               </div>
             </div>
             <div className="mt-4 flex items-center gap-2 text-sm">
@@ -78,7 +78,7 @@ export default function DashboardPage() {
               </div>
               <div className="text-right">
                 <p className="text-3xl font-bold text-white">{stats?.facturas_pagadas || 0}</p>
-                <p className="text-sm text-white/50">Facturas Pagadas</p>
+                <p className="text-sm text-slate-300">Facturas Pagadas</p>
               </div>
             </div>
             <div className="mt-4 flex items-center justify-between">
@@ -96,7 +96,7 @@ export default function DashboardPage() {
               </div>
               <div className="text-right">
                 <p className="text-3xl font-bold text-white">{stats?.facturas_pendientes || 0}</p>
-                <p className="text-sm text-white/50">Pendientes</p>
+                <p className="text-sm text-slate-300">Pendientes</p>
               </div>
             </div>
             <div className="mt-4 flex items-center gap-2">
@@ -113,13 +113,13 @@ export default function DashboardPage() {
                 <Zap className="h-6 w-6 text-yellow-400" />
               </div>
               <div className="text-right">
-                <p className="text-3xl font-bold text-white">{formatNumber(stats?.consumo_total_kwh || 0)}</p>
-                <p className="text-sm text-white/50">kWh Consumidos</p>
+                <p className="text-3xl font-bold text-white">{formatKwh(stats?.consumo_total_kwh || 0)}</p>
+                <p className="text-sm text-slate-300">kWh Consumidos</p>
               </div>
             </div>
             <div className="mt-4 flex items-center justify-between">
               <span className="text-sm text-white/50">promedio</span>
-              <span className="text-yellow-400 font-medium">{formatNumber(stats?.promedio_consumo_kwh || 0)} kWh</span>
+              <span className="text-yellow-400 font-medium">{formatKwh(stats?.promedio_consumo_kwh || 0)} kWh</span>
             </div>
           </CardContent>
         </Card>
@@ -230,22 +230,23 @@ export default function DashboardPage() {
 
       <style>{`
         .glass-card {
-          background: rgba(255, 255, 255, 0.05);
+          background: rgba(30, 41, 59, 0.72);
           backdrop-filter: blur(20px);
           -webkit-backdrop-filter: blur(20px);
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          border-radius: 16px;
+          border: 1px solid rgba(148, 163, 184, 0.18);
+          border-radius: 12px;
+          box-shadow: 0 18px 50px rgba(2, 6, 23, 0.22);
         }
 
         .glass-button {
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: rgba(15, 23, 42, 0.55);
+          border: 1px solid rgba(148, 163, 184, 0.22);
           color: white;
         }
 
         .glass-button:hover {
-          background: rgba(255, 255, 255, 0.1);
-          border-color: rgba(255, 255, 255, 0.2);
+          background: rgba(30, 41, 59, 0.85);
+          border-color: rgba(94, 234, 212, 0.45);
         }
       `}</style>
     </div>

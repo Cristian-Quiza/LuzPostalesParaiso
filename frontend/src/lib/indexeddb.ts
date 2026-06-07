@@ -35,7 +35,6 @@ export async function initDB(): Promise<IDBPDatabase<PortalesDB>> {
         }
       },
     });
-    console.log('IndexedDB initialized successfully');
     return db;
   } catch (error) {
     console.error('Error initializing IndexedDB:', error);
@@ -47,7 +46,6 @@ export async function saveLecturaOffline(lectura: LecturaOffline): Promise<void>
   try {
     const database = await initDB();
     await database.put('lecturas', lectura);
-    console.log('Lectura guardada offline:', lectura.offline_id);
   } catch (error) {
     console.error('Error guardando lectura offline:', error);
     throw error;
@@ -83,7 +81,6 @@ export async function addToSyncQueue(type: 'lectura' | 'pago', data: unknown): P
       data,
       created_at: new Date().toISOString(),
     });
-    console.log('Agregado a cola de sincronización:', queueId);
   } catch (error) {
     console.error('Error agregando a cola de sincronización:', error);
     throw error;
